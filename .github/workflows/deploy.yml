@@ -2,10 +2,10 @@ name: 更新并部署 虚拟币监控台
 
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '*/5 * * * *'    # 每 5 分钟自动运行一次（UTC 时间）
+  workflow_dispatch:          # 允许在 Actions 页面手动点击运行
   push:
-    branches: [ main ]
+    branches: [ main ]        # 每次有改动推送到 main 也会更新
 
 permissions:
   contents: read
