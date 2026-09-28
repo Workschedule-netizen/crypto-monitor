@@ -138,7 +138,7 @@ $items = New-Object System.Collections.ArrayList
 $bnHeaders = @{ 'Accept'='application/json'; 'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)'; 'lang'='zh-CN'; 'clienttype'='web' }
 # 币安用 catalog/list/query（可返回多条）；48=上币 49=最新消息 161=上新 128/93=其他
 # 该接口无 releaseDate，时间取标题内日期，没有则用当天
-foreach ($cid in 48,49,161,128,93) {
+foreach ($cid in 48,49,157,161,128,93) {
   foreach ($pno in 1,2,3,4) {
     Start-Sleep -Milliseconds 200
     try {
@@ -704,6 +704,7 @@ if ($tgToken -and $tgChat -and $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
 
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
