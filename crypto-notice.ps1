@@ -101,28 +101,33 @@ $bnHeaders = @{ 'Accept'='application/json'; 'User-Agent'='Mozilla/5.0 (Windows 
 # 币安用 catalog/list/query（可返回多条）；48=上币 49=最新消息 161=上新 128/93=其他
 # 该接口无 releaseDate，时间取标题内日期，没有则用当天
 foreach ($cid in 48,49,161,128,93) {
-  try {
-    $r = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query?catalogId=$cid&pageNo=1&pageSize=30" $bnHeaders
-    foreach ($a in $r.data.articles) {
-      if (Should-Keep $a.title) {
-        $t = Get-Date
-        if ($a.title -match '(\d{4}-\d{2}-\d{2})') { try { $t = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null) } catch {} }
-        [void]$items.Add([pscustomobject]@{
-          Exchange = 'Binance'
-          Time     = $t
-          Title    = [string]$a.title
-          Url      = "https://www.binance.com/zh-CN/support/announcement/$($a.code)"
-          Chains   = (Get-Chains $a.title)
-          Level    = (Get-Level $a.title)
-        })
+  foreach ($pno in 1,2,3,4) {
+    Start-Sleep -Milliseconds 200
+    try {
+      $r = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query?catalogId=$cid&pageNo=$pno&pageSize=50" $bnHeaders
+      if (-not $r.data.articles -or @($r.data.articles).Count -eq 0) { break }
+      foreach ($a in $r.data.articles) {
+        if (Should-Keep $a.title) {
+          $t = Get-Date
+          if ($a.title -match '(\d{4}-\d{2}-\d{2})') { try { $t = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null) } catch {} }
+          [void]$items.Add([pscustomobject]@{
+            Exchange = 'Binance'
+            Time     = $t
+            Title    = [string]$a.title
+            Url      = "https://www.binance.com/zh-CN/support/announcement/$($a.code)"
+            Chains   = (Get-Chains $a.title)
+            Level    = (Get-Level $a.title)
+          })
+        }
       }
-    }
-  } catch { Write-Host "    币安分类 $cid 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    } catch { Write-Host "    币安分类 $cid 第$pno页 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  }
 }
 
 # ============ 欧易 OKX（充提暂停/恢复专属分类） ============
 $okxHeaders = @{ 'Accept'='application/json'; 'Accept-Language'='zh-CN'; 'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-foreach ($pg in 1,2) {
+foreach ($pg in 1..5) {
+  Start-Sleep -Milliseconds 400
   try {
     $r = Get-Json "https://www.okx.com/api/v5/support/announcements?annType=announcements-deposit-withdrawal-suspension-resumption&page=$pg" $okxHeaders
     if ($r.data.Count -gt 0) {
@@ -188,8 +193,9 @@ try {
   Write-Host "  OKX 场外 USDT：买入 $okxBuy / 卖出 $okxSell" -ForegroundColor Green
 } catch { Write-Host "    OKX 场外价抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
-# ============ 去重 + 排序 ============
-$items = $items | Sort-Object Time -Descending | Group-Object Url | ForEach-Object { $_.Group[0] } | Sort-Object Time -Descending
+# ============ 去重 + 只保留近一年 + 排序 ============
+$oneYearAgo = (Get-Date).AddYears(-1)
+$items = $items | Where-Object { $_.Time -ge $oneYearAgo } | Sort-Object Time -Descending | Group-Object Url | ForEach-Object { $_.Group[0] } | Sort-Object Time -Descending
 
 $today = (Get-Date).Date
 $todayAlerts = @($items | Where-Object { $_.Level -eq 'alert' -and $_.Time.Date -eq $today }).Count
@@ -201,7 +207,7 @@ $levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'info'='相关' }
 $exClass   = @{ 'Binance'='ex-bn'; 'OKX'='ex-okx'; 'Coinbase'='ex-cb' }
 $rowsSb = New-Object System.Text.StringBuilder
 if ($totalCount -eq 0) {
-  [void]$rowsSb.Append('<div class="empty">当前无维护 / 暂停 / 升级相关公告<br><span>各链充提大概率正常 · 要更新请重跑「检查公告.bat」</span></div>')
+  [void]$rowsSb.Append('<div class="empty">当前无维护 / 暂停 / 升级相关公告<br><span>各链充提大概率正常 · 每 5 分钟自动更新</span></div>')
 } else {
   foreach ($it in $items) {
     $chainAttr = ($it.Chains -join ' ')
@@ -332,9 +338,14 @@ $tpl = @'
   /* 提醒 */
   #livealert{display:none;position:sticky;top:10px;z-index:50;background:var(--alert);color:#fff;font-weight:700;padding:11px 15px;border-radius:8px;margin-bottom:14px;text-align:center;box-shadow:0 4px 24px rgba(234,57,67,.45);animation:pulse 1.2s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-  .bell{background:transparent;border:1px solid var(--line2);color:var(--sub);border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:var(--sans)}
-  .bell:hover{color:var(--txt)}
-  .bell.on{background:rgba(22,199,132,.12);border-color:var(--resume);color:var(--resume)}
+  #loginGate{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
+  #loginGate .box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:34px 28px;width:100%;max-width:360px;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,.45)}
+  #loginGate h2{font-size:21px;margin:0 0 6px;color:var(--txt)}
+  #loginGate .lg-sub{font-size:12px;color:var(--sub);margin-bottom:22px}
+  #loginGate input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:12px 14px;font-size:14px;color:var(--txt);margin-bottom:12px;outline:none}
+  #loginGate input:focus{border-color:var(--accent)}
+  #loginGate button{width:100%;background:var(--accent);color:#04121f;border:none;border-radius:9px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px}
+  #loginErr{color:var(--alert);font-size:12px;min-height:16px;margin-bottom:6px}
   /* 实时汇率 */
   .usdtwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:680px){.usdtwrap{grid-template-columns:1fr}}
@@ -356,6 +367,17 @@ $tpl = @'
 </style>
 </head>
 <body>
+<div id="loginGate">
+  <div class="box">
+    <div style="font-size:42px;margin-bottom:6px">🤖</div>
+    <h2>虚拟币监控台</h2>
+    <div class="lg-sub">请输入账号密码登录</div>
+    <input id="lgUser" placeholder="账号" autocomplete="off" autocapitalize="off">
+    <input id="lgPass" type="password" placeholder="密码">
+    <div id="loginErr"></div>
+    <button id="lgBtn">登 录</button>
+  </div>
+</div>
 <header>
   <div class="brand">
     <h1><svg width="26" height="26" viewBox="0 0 24 24" style="vertical-align:-5px;margin-right:9px"><rect x="4" y="8" width="16" height="11" rx="3.5" fill="#3b82f6"/><circle cx="9.5" cy="13" r="1.7" fill="#fff"/><circle cx="14.5" cy="13" r="1.7" fill="#fff"/><path d="M12 4v4" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="3.4" r="1.9" fill="#22c55e"/><rect x="9.5" y="16" width="5" height="1.6" rx="0.8" fill="#fff" opacity=".55"/></svg>虚拟币监控台</h1>
@@ -363,14 +385,14 @@ $tpl = @'
   </div>
   <div class="head-right">
     <span id="sysStatus">连接中…</span>
-    <a class="refresh" href="RUNAGAIN">重新抓取</a>
+    <a class="refresh" href="#" onclick="location.reload();return false;">刷新页面</a>
   </div>
 </header>
 <div id="livealert"></div>
 <div class="section">
   <div class="sec-head">
     <div class="sec-title"><span class="bar"></span><h2>链路实时状态</h2><span class="sub">直读区块链节点 · 15s 自动刷新</span></div>
-    <span class="sec-meta"><button class="bell" id="bell">开启提醒</button>更新 <b id="upd">—</b> · 下次 <b id="cd">15</b>s · <a href="#" id="reload">刷新</a></span>
+    <span class="sec-meta">更新 <b id="upd">—</b> · 下次 <b id="cd">15</b>s · <a href="#" id="reload">刷新</a></span>
   </div>
   <div class="chaingrid" id="chaingrid"></div>
 </div>
@@ -423,11 +445,27 @@ __ROWS__
   <div class="pager" id="pager"></div>
 </div>
 <footer>
-  公告抓取时间：__UPDATED__ ｜ 公告来源：Binance / OKX 官方公告接口（打开时的快照）<br>
-  链实时状态来源：TronGrid / PublicNode / Toncenter 公共节点（网页内自动刷新）<br>
-  点公告卡片可跳转官方原文 ｜ 公告要更新请回文件夹再双击「检查公告.bat」
+  公告更新时间：__UPDATED__（UTC）｜ 来源：Binance / OKX / Coinbase 官方接口 · 每 5 分钟由 GitHub 自动更新<br>
+  链实时状态 &amp; 汇率：网页内每 15~60 秒自动刷新（TronGrid / PublicNode / Toncenter / CoinGecko）<br>
+  仅显示近一年内、涉及 TRON/BSC/ETH/TON/SOL 或交易所系统维护的公告 ｜ 点卡片可跳转官方原文
 </footer>
 <script>
+  // ====== 登录门（前端简单验证，账号密码 a12345）======
+  (function(){
+    var USER='a12345', PASS='a12345', KEY='vcmc_login';
+    var gate=document.getElementById('loginGate');
+    if(!gate) return;
+    try{ if(localStorage.getItem(KEY)==='1'){ gate.style.display='none'; return; } }catch(e){}
+    function tryLogin(){
+      var u=(document.getElementById('lgUser').value||'').trim();
+      var p=document.getElementById('lgPass').value||'';
+      if(u===USER&&p===PASS){ try{localStorage.setItem(KEY,'1')}catch(e){}; gate.style.display='none'; }
+      else { document.getElementById('loginErr').textContent='账号或密码错误'; }
+    }
+    document.getElementById('lgBtn').addEventListener('click',tryLogin);
+    document.getElementById('lgPass').addEventListener('keydown',function(e){ if(e.key==='Enter')tryLogin(); });
+    document.getElementById('lgUser').addEventListener('keydown',function(e){ if(e.key==='Enter')document.getElementById('lgPass').focus(); });
+  })();
   var chainF='all', exF='all', PAGE_SIZE=10, curPage=1, filtered=[];
   var cards=document.querySelectorAll('#list .card');
   function computeFiltered(){
@@ -516,21 +554,8 @@ __ROWS__
     el.querySelector('.cc-status').textContent=res.status;
     el.querySelector('.cc-meta').textContent=res.meta;
   }
-  // ====== 提醒：声音 + 系统通知 + 横幅 + 标题闪烁 ======
-  var audioCtx=null, alertOn=false, prevCls={}, flashTimer=null;
-  function initAudio(){ try{ if(!audioCtx){audioCtx=new (window.AudioContext||window.webkitAudioContext)();} if(audioCtx.state==='suspended')audioCtx.resume(); }catch(e){} }
-  function beep(){
-    if(!audioCtx)return;
-    var t=audioCtx.currentTime;
-    for(var i=0;i<3;i++){
-      var o=audioCtx.createOscillator(),g=audioCtx.createGain();
-      o.type='square';o.frequency.value=(i%2)?988:784;o.connect(g);g.connect(audioCtx.destination);
-      var s=t+i*0.34;
-      g.gain.setValueAtTime(0.0001,s);g.gain.exponentialRampToValueAtTime(0.35,s+0.02);g.gain.exponentialRampToValueAtTime(0.0001,s+0.3);
-      o.start(s);o.stop(s+0.32);
-    }
-  }
-  function notify(title,body){ try{ if(window.Notification&&Notification.permission==='granted')new Notification(title,{body:body}); }catch(e){} }
+  // ====== 异常视觉提醒：横幅 + 状态 + 标题闪烁 ======
+  var prevCls={}, flashTimer=null;
   function flashTitle(msg){ if(flashTimer)return; var on=false; flashTimer=setInterval(function(){document.title=on?'虚拟币监控台':('🔴 '+msg);on=!on;},800); }
   function stopFlash(){ if(flashTimer){clearInterval(flashTimer);flashTimer=null;document.title='虚拟币监控台';} }
   function handleAlerts(newlyBad,badNow){
@@ -541,7 +566,6 @@ __ROWS__
       lb.textContent='● 异常链：'+badNow.join('、')+' — 请立即核实充提状态！';
       if(ss){ ss.textContent='▲ '+badNow.length+' 链异常'; ss.className='bad'; }
       flashTitle(badNow.join('/')+' 异常');
-      if(alertOn&&newlyBad.length>0){ beep(); notify('链状态异常', newlyBad.join('、')+' 出现异常，请核实充提'); }
     } else {
       lb.style.display='none'; stopFlash();
       if(ss){ ss.textContent='● 链路全部正常'; ss.className='ok'; }
@@ -574,13 +598,6 @@ __ROWS__
   updateAll();
   setInterval(function(){cd--;if(cd<=0){cd=INT;updateAll();}var e=document.getElementById('cd');if(e)e.textContent=cd;},1000);
   document.getElementById('reload').addEventListener('click',function(ev){ev.preventDefault();cd=INT;updateAll();});
-  var bell=document.getElementById('bell');
-  bell.addEventListener('click',function(){
-    initAudio();
-    alertOn=!alertOn;
-    if(alertOn){ if(window.Notification&&Notification.permission==='default'){Notification.requestPermission();} bell.textContent='🔔 提醒已开';bell.classList.add('on'); beep(); }
-    else { bell.textContent='🔔 开启提醒';bell.classList.remove('on'); }
-  });
   // ====== USDT 市场实时价：CoinGecko，浏览器直连，每 60 秒更新 ======
   function updateRates(){
     fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=cny&include_24hr_change=true')
@@ -601,8 +618,6 @@ __ROWS__
 
 $html = $tpl.Replace('__BANNERCLASS__', $bannerClass).Replace('__BANNERTEXT__', $bannerText).Replace('__ROWS__', $rows).Replace('__OKXBUY__', $okxBuy).Replace('__OKXSELL__', $okxSell).Replace('__UPDATED__', $updated)
 # 「重新抓取」链接指向本脚本的 bat 启动器
-$batPath = Join-Path $ScriptDir '检查公告.bat'
-$html = $html.Replace('RUNAGAIN', ([uri]$batPath).AbsoluteUri)
 
 # 用 UTF-8 写出（PS5.1 的 utf8 带 BOM，配合 meta charset 无乱码）
 $html | Out-File -FilePath $OutFile -Encoding utf8
@@ -610,6 +625,10 @@ $html | Out-File -FilePath $OutFile -Encoding utf8
 Write-Host "  网页已生成：$OutFile" -ForegroundColor Green
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
+
+
+
 
 
 
