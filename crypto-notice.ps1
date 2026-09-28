@@ -601,8 +601,34 @@ $html = $tpl.Replace('__BANNERCLASS__', $bannerClass).Replace('__BANNERTEXT__', 
 $html | Out-File -FilePath $OutFile -Encoding utf8
 
 Write-Host "  网页已生成：$OutFile" -ForegroundColor Green
+
+# ============ Telegram 推送（配置了 Secrets 时；只推近3天内、未推过的 维护/暂停/升级）============
+$tgToken = $env:TG_TOKEN; $tgChat = $env:TG_CHAT
+if ($tgToken -and $tgChat) {
+  $pushedFile = Join-Path $ScriptDir 'pushed.txt'
+  $pushed = @(); if (Test-Path $pushedFile) { $pushed = @(Get-Content $pushedFile -Encoding UTF8) }
+  $recent = (Get-Date).AddDays(-3)
+  $toNotify = @($items | Where-Object { ($_.Level -eq 'alert' -or $_.Level -eq 'upgrade') -and $_.Time -ge $recent })
+  $newCount = 0
+  foreach ($n in $toNotify) {
+    if ($pushed -contains $n.Url) { continue }
+    $emoji = if ($n.Level -eq 'alert') { "🔴" } else { "🔵" }
+    $chains = if ($n.Chains) { ($n.Chains -join '/') } else { '多链' }
+    $msg = "$emoji $($levelText[$n.Level]) · $($n.Exchange)`n链：$chains`n$($n.Title)`n$($n.Url)"
+    $payload = @{ chat_id = $tgChat; text = $msg; disable_web_page_preview = $true } | ConvertTo-Json -Compress
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    try {
+      Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
+      $pushed += $n.Url; $newCount++; Start-Sleep -Milliseconds 400
+    } catch { Write-Host "  Telegram 推送失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  }
+  @($pushed | Select-Object -Last 500) | Out-File -FilePath $pushedFile -Encoding UTF8
+  Write-Host "  Telegram：本次新推送 $newCount 条" -ForegroundColor Cyan
+}
+
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
