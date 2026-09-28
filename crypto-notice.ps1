@@ -32,16 +32,25 @@ $StrictKw = '暂停|暫停|维护|維護|停机|停機|停充|停提|充值|儲�
 # 交易所整体维护（不依赖具体链）
 $SysKw    = '系统维护|系統維護|系统升级|系統升級|平台维护|平台維護|停机维护|停機維護|系统公告|系統公告|系统故障|系統故障|System Maintenance'
 # 明确排除（活动/理财/合约等杂项，命中即丢弃）
-$ExcludeKw = '空投|理财|理財|竞赛|競賽|活动|活動|Alpha|HODLer|Launchpool|Megadrop|奖励|獎勵|瓜分|持币|持幣|盘前|盤前|Pre-IPO|永續合約|永续合约|风险限额|風險限額|返佣|限时|限時|上线|上線|上市|理财竞技'
+$ExcludeKw = '空投|理财|理財|竞赛|競賽|活动|活動|Alpha|HODLer|Launchpool|Megadrop|奖励|獎勵|瓜分|持币|持幣|盘前|盤前|Pre-IPO|合约|合約|风险限额|風險限額|返佣|限时|限時|上线|上線|上市|理财竞技|杠杆|槓桿|保证金|保證金'
 
 function Get-Chains($title) {
   $found = @()
   foreach ($k in $ChainMap.Keys) { if ($title -match $ChainMap[$k]) { $found += $k } }
   return $found
 }
-function Get-Level($title) {
-  if (($title -match $ResumeKw) -and ($title -notmatch '暂停|暫停|停止|停充|停提|将于|將於')) { return 'resume' }
-  if ($title -match $AlertKw) { return 'alert' }
+function Get-Level($title, $t) {
+  # 明确"已恢复/已完成"
+  if ($title -match '恢復|恢复|已完成|已恢復|重新开放|重新開放|开放充值|開放充值|resume|resumed|completed|restored') { return 'resume' }
+  # "暂停/停机/维护"类（真正需要注意的）
+  if ($title -match '暂停|暫停|停止|停机|停機|停充|停提|維護|维护|suspend|suspension|paused|halt|delayed|maintenance') {
+    # 超过 3 天前的，视为早已恢复/已过去，不再红色警报
+    if ($t -and ($t -lt (Get-Date).AddDays(-3))) { return 'resume' }
+    return 'alert'
+  }
+  # 升级 / 硬分叉（专属标签）
+  if ($title -match '升级|升級|硬分叉|hard fork|upgrade') { return 'upgrade' }
+  # 其他（支持公告等）= 中性
   return 'info'
 }
 # 保留条件：涉及5链且是充提/维护语境，或交易所系统维护
@@ -116,7 +125,7 @@ foreach ($cid in 48,49,161,128,93) {
             Title    = [string]$a.title
             Url      = "https://www.binance.com/zh-CN/support/announcement/$($a.code)"
             Chains   = (Get-Chains $a.title)
-            Level    = (Get-Level $a.title)
+            Level    = (Get-Level $a.title $t)
           })
         }
       }
@@ -140,7 +149,7 @@ foreach ($pg in 1..5) {
           Title    = [string]$d.title
           Url      = [string]$d.url
           Chains   = (Get-Chains $d.title)
-          Level    = (Get-Level $d.title)
+          Level    = (Get-Level $d.title $t)
         })
       }
     }
@@ -203,7 +212,7 @@ $totalCount = @($items).Count
 Write-Host "  完成：共 $totalCount 条相关公告，其中今日维护/暂停 $todayAlerts 条" -ForegroundColor Green
 
 # ============ 生成公告行 HTML ============
-$levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'info'='相关' }
+$levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'upgrade'='升级'; 'info'='相关' }
 $exClass   = @{ 'Binance'='ex-bn'; 'OKX'='ex-okx'; 'Coinbase'='ex-cb' }
 $rowsSb = New-Object System.Text.StringBuilder
 if ($totalCount -eq 0) {
@@ -295,6 +304,7 @@ $tpl = @'
   .card:hover{background:var(--card2)}
   .card.lvl-alert{border-left-color:var(--alert)}
   .card.lvl-resume{border-left-color:var(--resume)}
+  .card.lvl-upgrade{border-left-color:#58a6ff}
   .card.lvl-info{border-left-color:var(--faint)}
   .row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
   .ex{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px}
@@ -304,6 +314,7 @@ $tpl = @'
   .badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:5px}
   .b-alert{background:rgba(234,57,67,.15);color:#ff8a8f}
   .b-resume{background:rgba(22,199,132,.15);color:#5fe0aa}
+  .b-upgrade{background:rgba(88,166,255,.15);color:#79b8ff}
   .b-info{background:rgba(122,136,150,.15);color:var(--sub)}
   .chip{font-family:var(--mono);font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px;background:rgba(61,155,255,.12);color:#7cc0ff;border:1px solid rgba(61,155,255,.25)}
   .chip-none{background:rgba(122,136,150,.1);color:var(--sub);border-color:var(--line)}
@@ -576,6 +587,8 @@ __ROWS__
   }
   updateRates();
   setInterval(updateRates,60000);
+  // 公告数据每 5 分钟随页面自动刷新（重新载入 GitHub 最新生成的 index.html）
+  setTimeout(function(){ location.reload(); }, 300000);
 </script>
 </body>
 </html>
@@ -590,6 +603,9 @@ $html | Out-File -FilePath $OutFile -Encoding utf8
 Write-Host "  网页已生成：$OutFile" -ForegroundColor Green
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
+
+
 
 
 
