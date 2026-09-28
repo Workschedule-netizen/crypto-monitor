@@ -102,6 +102,35 @@ function Get-Json($url, $headers) {
   $text = [System.Text.Encoding]::UTF8.GetString($bytes)
   return ($text | ConvertFrom-Json)
 }
+# 发送 Telegram 消息（UTF-8 JSON）
+function Send-TG($token, $chat, $text) {
+  $p = @{ chat_id = $chat; text = $text; disable_web_page_preview = $true } | ConvertTo-Json -Compress
+  try { Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($p)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null } catch {}
+}
+# 检测单条链是否正常，返回 $null=正常，字符串=异常原因
+function Test-Chain($type, $url, $maxAgeSec) {
+  try {
+    if ($type -eq 'tron') {
+      $r = Invoke-RestMethod -Uri $url -Method Post -Body '{}' -ContentType 'application/json' -TimeoutSec 15
+      $age = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [int64]$r.block_header.raw_data.timestamp) / 1000
+      if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
+    }
+    if ($type -eq 'evm') {
+      $r = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' -ContentType 'application/json' -TimeoutSec 15
+      $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [Convert]::ToInt64($r.result.timestamp, 16)
+      if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
+    }
+    if ($type -eq 'sol') {
+      $r = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"getHealth","id":1}' -ContentType 'application/json' -TimeoutSec 15
+      if ($r.result -eq 'ok') { return $null } else { return "节点健康异常" }
+    }
+    if ($type -eq 'ton') {
+      $r = Invoke-RestMethod -Uri $url -TimeoutSec 15
+      if ([int64]$r.result.last.seqno -gt 0) { return $null } else { return "无法获取区块" }
+    }
+    return $null
+  } catch { return "连接失败/无响应" }
+}
 
 $items = New-Object System.Collections.ArrayList
 
@@ -624,6 +653,29 @@ if ($tgToken -and $tgChat) {
   }
   @($pushed | Select-Object -Last 500) | Out-File -FilePath $pushedFile -Encoding UTF8
   Write-Host "  Telegram：本次新推送 $newCount 条" -ForegroundColor Cyan
+
+  # ---- 链本身异常检测 + 推送（含恢复通知，自动去重）----
+  $chainLogFile = Join-Path $ScriptDir 'chainlog.txt'
+  $prevBad = @(); if (Test-Path $chainLogFile) { $prevBad = @(Get-Content $chainLogFile -Encoding UTF8 | Where-Object { $_ }) }
+  $chainDefs = @(
+    @{ n='TRON'; t='tron'; u='https://api.trongrid.io/wallet/getnowblock'; age=180 },
+    @{ n='BSC';  t='evm';  u='https://bsc-rpc.publicnode.com'; age=120 },
+    @{ n='ETH';  t='evm';  u='https://ethereum-rpc.publicnode.com'; age=300 },
+    @{ n='SOL';  t='sol';  u='https://solana-rpc.publicnode.com'; age=0 },
+    @{ n='TON';  t='ton';  u='https://toncenter.com/api/v2/getMasterchainInfo'; age=0 }
+  )
+  $nowBad = @()
+  foreach ($ch in $chainDefs) {
+    $reason = Test-Chain $ch.t $ch.u $ch.age
+    if ($reason) {
+      $nowBad += $ch.n
+      if ($prevBad -notcontains $ch.n) { Send-TG $tgToken $tgChat "🔴 链异常 · $($ch.n)`n$reason`n请留意该链充提是否受影响。" }
+    } elseif ($prevBad -contains $ch.n) {
+      Send-TG $tgToken $tgChat "🟢 链已恢复 · $($ch.n)`n出块恢复正常。"
+    }
+  }
+  @($nowBad) | Out-File -FilePath $chainLogFile -Encoding UTF8
+  Write-Host "  链检测：当前异常 $($nowBad.Count) 条" -ForegroundColor Cyan
 }
 
 # 手动触发（workflow_dispatch）时发一条测试消息，确认推送通道
@@ -635,6 +687,7 @@ if ($tgToken -and $tgChat -and $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
 
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
