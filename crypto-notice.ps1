@@ -626,8 +626,16 @@ if ($tgToken -and $tgChat) {
   Write-Host "  Telegram：本次新推送 $newCount 条" -ForegroundColor Cyan
 }
 
+# 手动触发（workflow_dispatch）时发一条测试消息，确认推送通道
+if ($tgToken -and $tgChat -and $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+  $tmsg = "✅ 虚拟币监控台 · 推送测试成功`n通道正常，当前共 $totalCount 条相关公告。`n真出现维护/暂停/升级时会自动通知你。"
+  $tp = @{ chat_id = $tgChat; text = $tmsg; disable_web_page_preview = $true } | ConvertTo-Json -Compress
+  try { Invoke-RestMethod -Uri "https://api.telegram.org/bot$tgToken/sendMessage" -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($tp)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null; Write-Host "  已发送手动测试消息" -ForegroundColor Cyan } catch {}
+}
+
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
