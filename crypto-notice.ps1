@@ -676,6 +676,23 @@ if ($tgToken -and $tgChat) {
   }
   @($nowBad) | Out-File -FilePath $chainLogFile -Encoding UTF8
   Write-Host "  链检测：当前异常 $($nowBad.Count) 条" -ForegroundColor Cyan
+
+  # ---- 每日定时排查报告（北京时间 12:00 与 00:00 各一次）----
+  $bjNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(8))
+  $slot = $null
+  if ($bjNow.Hour -eq 12) { $slot = $bjNow.ToString('yyyy-MM-dd') + '-noon' }
+  elseif ($bjNow.Hour -eq 0) { $slot = $bjNow.ToString('yyyy-MM-dd') + '-midnight' }
+  if ($slot) {
+    $reportFile = Join-Path $ScriptDir 'lastreport.txt'
+    $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = ((Get-Content $reportFile -Encoding UTF8 -Raw)).Trim() }
+    if ($slot -ne $lastSlot) {
+      $chainLine = if ($nowBad.Count -eq 0) { '五条链全部正常 ✅' } else { '⚠ 异常：' + ($nowBad -join '、') }
+      $report = "📊 虚拟币监控 · 每日排查`n$($bjNow.ToString('MM-dd HH:mm')) 北京`n———————`n链状态：$chainLine`nUSDT场外：买 ¥$okxBuy / 卖 ¥$okxSell`n近3天维护/暂停/升级：$($toNotify.Count) 条`n———————`nhttps://workschedule-netizen.github.io/crypto-monitor/"
+      Send-TG $tgToken $tgChat $report
+      $slot | Out-File -FilePath $reportFile -Encoding UTF8
+      Write-Host "  已发送每日排查报告（$slot）" -ForegroundColor Cyan
+    }
+  }
 }
 
 # 手动触发（workflow_dispatch）时发一条测试消息，确认推送通道
@@ -687,6 +704,7 @@ if ($tgToken -and $tgChat -and $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
 
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
