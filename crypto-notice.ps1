@@ -338,14 +338,6 @@ $tpl = @'
   /* 提醒 */
   #livealert{display:none;position:sticky;top:10px;z-index:50;background:var(--alert);color:#fff;font-weight:700;padding:11px 15px;border-radius:8px;margin-bottom:14px;text-align:center;box-shadow:0 4px 24px rgba(234,57,67,.45);animation:pulse 1.2s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-  #loginGate{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
-  #loginGate .box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:34px 28px;width:100%;max-width:360px;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,.45)}
-  #loginGate h2{font-size:21px;margin:0 0 6px;color:var(--txt)}
-  #loginGate .lg-sub{font-size:12px;color:var(--sub);margin-bottom:22px}
-  #loginGate input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:12px 14px;font-size:14px;color:var(--txt);margin-bottom:12px;outline:none}
-  #loginGate input:focus{border-color:var(--accent)}
-  #loginGate button{width:100%;background:var(--accent);color:#04121f;border:none;border-radius:9px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px}
-  #loginErr{color:var(--alert);font-size:12px;min-height:16px;margin-bottom:6px}
   /* 实时汇率 */
   .usdtwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media(max-width:680px){.usdtwrap{grid-template-columns:1fr}}
@@ -367,17 +359,6 @@ $tpl = @'
 </style>
 </head>
 <body>
-<div id="loginGate">
-  <div class="box">
-    <div style="font-size:42px;margin-bottom:6px">🤖</div>
-    <h2>虚拟币监控台</h2>
-    <div class="lg-sub">请输入账号密码登录</div>
-    <input id="lgUser" placeholder="账号" autocomplete="off" autocapitalize="off">
-    <input id="lgPass" type="password" placeholder="密码">
-    <div id="loginErr"></div>
-    <button id="lgBtn">登 录</button>
-  </div>
-</div>
 <header>
   <div class="brand">
     <h1><svg width="26" height="26" viewBox="0 0 24 24" style="vertical-align:-5px;margin-right:9px"><rect x="4" y="8" width="16" height="11" rx="3.5" fill="#3b82f6"/><circle cx="9.5" cy="13" r="1.7" fill="#fff"/><circle cx="14.5" cy="13" r="1.7" fill="#fff"/><path d="M12 4v4" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="3.4" r="1.9" fill="#22c55e"/><rect x="9.5" y="16" width="5" height="1.6" rx="0.8" fill="#fff" opacity=".55"/></svg>虚拟币监控台</h1>
@@ -450,22 +431,6 @@ __ROWS__
   仅显示近一年内、涉及 TRON/BSC/ETH/TON/SOL 或交易所系统维护的公告 ｜ 点卡片可跳转官方原文
 </footer>
 <script>
-  // ====== 登录门（前端简单验证，账号密码 a12345）======
-  (function(){
-    var USER='a12345', PASS='a12345', KEY='vcmc_login';
-    var gate=document.getElementById('loginGate');
-    if(!gate) return;
-    try{ if(localStorage.getItem(KEY)==='1'){ gate.style.display='none'; return; } }catch(e){}
-    function tryLogin(){
-      var u=(document.getElementById('lgUser').value||'').trim();
-      var p=document.getElementById('lgPass').value||'';
-      if(u===USER&&p===PASS){ try{localStorage.setItem(KEY,'1')}catch(e){}; gate.style.display='none'; }
-      else { document.getElementById('loginErr').textContent='账号或密码错误'; }
-    }
-    document.getElementById('lgBtn').addEventListener('click',tryLogin);
-    document.getElementById('lgPass').addEventListener('keydown',function(e){ if(e.key==='Enter')tryLogin(); });
-    document.getElementById('lgUser').addEventListener('keydown',function(e){ if(e.key==='Enter')document.getElementById('lgPass').focus(); });
-  })();
   var chainF='all', exF='all', PAGE_SIZE=10, curPage=1, filtered=[];
   var cards=document.querySelectorAll('#list .card');
   function computeFiltered(){
@@ -625,6 +590,7 @@ $html | Out-File -FilePath $OutFile -Encoding utf8
 Write-Host "  网页已生成：$OutFile" -ForegroundColor Green
 Write-Host '  正在打开浏览器 ...' -ForegroundColor Cyan
 if (-not $env:GITHUB_ACTIONS) { try { Start-Process $OutFile } catch {} }
+
 
 
 
