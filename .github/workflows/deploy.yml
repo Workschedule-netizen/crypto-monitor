@@ -2,13 +2,13 @@ name: 更新并部署 虚拟币监控台
 
 on:
   schedule:
-    - cron: '*/5 * * * *'    # 每 5 分钟自动运行一次（UTC 时间）
-  workflow_dispatch:          # 允许在 Actions 页面手动点击运行
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
   push:
-    branches: [ main ]        # 每次有改动推送到 main 也会更新
+    branches: [ main ]
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -28,7 +28,19 @@ jobs:
 
       - name: 运行抓取脚本生成 index.html
         shell: pwsh
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT }}
         run: ./crypto-notice.ps1
+
+      - name: 保存推送记录
+        shell: bash
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add pushed.txt 2>/dev/null || true
+          git commit -m "update pushed list [skip ci]" 2>/dev/null || true
+          git push 2>/dev/null || true
 
       - name: 配置 Pages
         uses: actions/configure-pages@v5
