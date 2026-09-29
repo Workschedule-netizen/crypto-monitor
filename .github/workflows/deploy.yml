@@ -2,10 +2,12 @@ name: 更新并部署 虚拟币监控台
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+    - cron: '*/5 * * * *'    # 每 5 分钟自动运行一次（UTC 时间）
+  workflow_dispatch:          # 允许在 Actions 页面手动点击运行
+  repository_dispatch:        # 允许外部定时服务（如 cron-job.org）准时触发
+    types: [tick]
   push:
-    branches: [ main ]
+    branches: [ main ]        # 每次有改动推送到 main 也会更新
 
 permissions:
   contents: write
@@ -38,8 +40,11 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@users.noreply.github.com"
-          git add pushed.txt chainlog.txt lastreport.txt 2>/dev/null || true
-          git commit -m "update state [skip ci]" 2>/dev/null || true
+          # 逐个添加：任一文件不存在时，合在一起的 git add 会整条失败、什么都不保存
+          for f in pushed.txt chainlog.txt lastreport.txt; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
+          git commit -m "update pushed list [skip ci]" 2>/dev/null || true
           git push 2>/dev/null || true
 
       - name: 配置 Pages
