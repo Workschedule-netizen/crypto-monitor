@@ -678,10 +678,9 @@ if ($tgToken -and $tgChat) {
   Write-Host "  链检测：当前异常 $($nowBad.Count) 条" -ForegroundColor Cyan
 
   # ---- 每日定时排查报告（北京时间 12:00 与 00:00 各一次）----
+  # GitHub 定时触发不准时，错过整点那一小时也会在之后第一次运行时补发
   $bjNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(8))
-  $slot = $null
-  if ($bjNow.Hour -eq 12) { $slot = $bjNow.ToString('yyyy-MM-dd') + '-noon' }
-  elseif ($bjNow.Hour -eq 0) { $slot = $bjNow.ToString('yyyy-MM-dd') + '-midnight' }
+  $slot = $bjNow.ToString('yyyy-MM-dd') + $(if ($bjNow.Hour -ge 12) { '-noon' } else { '-midnight' })
   if ($slot) {
     $reportFile = Join-Path $ScriptDir 'lastreport.txt'
     $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = ((Get-Content $reportFile -Encoding UTF8 -Raw)).Trim() }
