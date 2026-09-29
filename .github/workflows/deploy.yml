@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false   # 不中途取消：避免消息已推送但记录还没保存就被打断
 
 jobs:
   build-deploy:
