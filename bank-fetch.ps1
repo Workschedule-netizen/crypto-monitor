@@ -25,7 +25,34 @@ function Get-Page($url, $timeout = 25) {
 }
 # 银行官网从海外连偶尔会超时：失败再试一次
 function Get-PageRetry($url) {
-  try { return (Get-Page $url 15) } catch { Start-Sleep -Seconds 2; return (Get-Page $url 15) }
+  try { return (Get-Page $url 15) }
+  catch {
+    # 对方服务器太旧、握手被拒绝的，重试也没用，直接改用下面的放宽方式
+    if ($IsLinux -and ((Ex-Chain $_.Exception) -match 'legacy renegotiation')) { return (Get-PageLegacyTls $url) }
+    Start-Sleep -Seconds 2; return (Get-Page $url 15)
+  }
+}
+# 有些银行官网（例如建设银行）的服务器比较旧，不支持「安全重新协商」。
+# GitHub 的服务器是 Linux，上面的 OpenSSL 3 默认拒绝跟这种服务器握手（unsafe legacy renegotiation disabled），Windows 上没这个问题。
+# 只对出这个错的网址放宽：另外起一个 curl，带一份只打开这个选项的 OpenSSL 设定。其他网站和 Telegram 的连线不受影响
+function Get-PageLegacyTls($url) {
+  $conf = Join-Path ([System.IO.Path]::GetTempPath()) 'openssl-legacy-renegotiation.cnf'
+  [System.IO.File]::WriteAllText($conf, "openssl_conf = openssl_init`n[openssl_init]`nssl_conf = ssl_sect`n[ssl_sect]`nsystem_default = system_default_sect`n[system_default_sect]`nOptions = UnsafeLegacyRenegotiation`n")
+  $old = $env:OPENSSL_CONF
+  try {
+    $env:OPENSSL_CONF = $conf
+    $out = & curl -sS --fail --max-time 20 -A $UA -H 'Accept-Language: zh-CN,zh;q=0.9' $url 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "curl 也抓不到（代码 $LASTEXITCODE）：$(($out | Out-String).Trim())" }
+  } finally { $env:OPENSSL_CONF = $old }
+  return (@($out) -join "`n")
+}
+# 把一个错误连同它内层的原因串成一行（像「SSL 连接建立失败」这种，真正的原因写在内层）
+function Ex-Chain($e) {
+  $parts = @()
+  if ($e -is [Exception]) {
+    while ($e -and ($parts.Count -lt 6)) { if ($parts -notcontains $e.Message) { $parts += $e.Message }; $e = $e.InnerException }
+  } else { $parts = @("$e") }
+  return ((($parts -join ' ← ') -replace '\s+', ' ').Trim())
 }
 function Strip-Html($h) {
   $t = [regex]::Replace($h, '(?s)<script.*?</script>|<style.*?</style>', '')
@@ -66,13 +93,9 @@ Write-Host '  正在抓取 银行 / 支付宝 维护公告 ...' -ForegroundColor
 # 每个来源除了 ok（连不连得上），还有 warn：连得上、但内容读不出来（多半是对方网页改版，解析规则要跟着改）
 # 这种情况不提醒的话，会一直显示「无维护」而没人发现
 # err 是连不上时的原因（最多 220 个字），网页页脚和 Telegram 提醒里会带上
-# 连内层的原因一起记：像「SSL 连接建立失败」这种，真正的原因写在内层
+# 连内层的原因一起记（见上面的 Ex-Chain）
 function Err-Text($e) {
-  $parts = @()
-  if ($e -is [Exception]) {
-    while ($e -and ($parts.Count -lt 5)) { if ($parts -notcontains $e.Message) { $parts += $e.Message }; $e = $e.InnerException }
-  } else { $parts = @("$e") }
-  $s = (($parts -join ' ← ') -replace '\s+', ' ').Trim()
+  $s = Ex-Chain $e
   if ($s.Length -gt 220) { $s = $s.Substring(0, 220) + '…' }
   return $s
 }
