@@ -69,9 +69,13 @@ $ChainDefs = @(
     [ordered]@{ t='evm'; u='https://eth.drpc.org' }
   ) },
   [ordered]@{ k='SOL'; n='Solana'; s='SPL'; bt=2; age=120; nodes=@(
+    [ordered]@{ t='sol'; u='https://public.rpc.solanavibestation.com' },
+    [ordered]@{ t='sol'; u='https://solana.api.pocket.network' },
+    # publicnode 的 Solana 节点从浏览器连经常要等 8 秒以上，所以排在后面当备用
     [ordered]@{ t='sol'; u='https://solana-rpc.publicnode.com' },
     [ordered]@{ t='sol'; u='https://api.mainnet-beta.solana.com'; web=$false },
-    [ordered]@{ t='sol'; u='https://solana-mainnet.gateway.tatum.io' }
+    # tatum 免费版每分钟只能问 5 次，网页每 15 秒问一次会一直被拒绝，只留给脚本用
+    [ordered]@{ t='sol'; u='https://solana-mainnet.gateway.tatum.io'; web=$false }
   ) },
   [ordered]@{ k='TON'; n='TON'; s='TON'; bt=5; age=180; nodes=@(
     [ordered]@{ t='ton'; u='https://toncenter.com/api/v3/masterchainInfo' },
@@ -201,18 +205,23 @@ function Test-Chain($type, $url, $maxAgeSec) {
   try {
     if ($type -eq 'tron') {
       $r = Invoke-RestMethod -Uri $url -Method Post -Body '{}' -ContentType 'application/json' -TimeoutSec 15
+      # 节点被限流时可能回一段错误内容、里面没有区块：这是节点没答上来，不能当成时间 0 算出「停滞十几亿秒」
+      if (-not $r.block_header.raw_data.timestamp) { return "无法获取区块" }
       $age = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [int64]$r.block_header.raw_data.timestamp) / 1000
       if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
     }
     if ($type -eq 'evm') {
       $r = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' -ContentType 'application/json' -TimeoutSec 15
-      $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [Convert]::ToInt64($r.result.timestamp, 16)
+      if (-not $r.result.timestamp) { return "无法获取区块" }
+      $age =[DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [Convert]::ToInt64($r.result.timestamp, 16)
       if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
     }
     if ($type -eq 'sol') {
       # getHealth 只是跟其他节点比进度，整条链一起停摆时照样回 ok，所以改看最新区块的出块时间
       $s = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"getSlot","params":[{"commitment":"confirmed"}],"id":1}' -ContentType 'application/json' -TimeoutSec 15
-      $b = Invoke-RestMethod -Uri $url -Method Post -Body ('{"jsonrpc":"2.0","method":"getBlockTime","params":[' + [int64]$s.result + '],"id":1}') -ContentType 'application/json' -TimeoutSec 15
+      # 拿不到 slot 就不要往下问：拿 0 去问出块时间，节点会回 2020 年的创世时间，算出来像是停滞了好几年
+      if (-not $s.result) { return "无法获取区块" }
+      $b =Invoke-RestMethod -Uri $url -Method Post -Body ('{"jsonrpc":"2.0","method":"getBlockTime","params":[' + [int64]$s.result + '],"id":1}') -ContentType 'application/json' -TimeoutSec 15
       if ($b.result) {
         $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$b.result
         if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
@@ -978,17 +987,17 @@ __ROWS__
   function bjClock(){var d=new Date(Date.now()+8*3600000);function p(n){return (n<10?'0':'')+n;}return p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());}
   // 8 秒没回应就放弃：节点卡住不回的话，要能轮到备用节点
   function tfetch(u,o){var c=new AbortController(),to=setTimeout(function(){c.abort();},8000);o=o||{};o.signal=c.signal;return fetch(u,o).then(function(r){clearTimeout(to);return r;},function(e){clearTimeout(to);throw e;});}
-  function jrpc(u,m,p){return tfetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:m,params:p||[],id:1})}).then(function(r){return r.json();});}
+  // 节点回 429（限流）/ 403 这类错误时算这个节点失败、换下一个，不要把错误内容当成链的数据
+  function jrpc(u,m,p){return tfetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:m,params:p||[],id:1})}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();});}
   function fetchNode(nd){
     if(nd.t==='tron'){return tfetch(nd.u,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){return {h:j.block_header.raw_data.number,ts:j.block_header.raw_data.timestamp};});}
     if(nd.t==='evm'){return jrpc(nd.u,'eth_getBlockByNumber',['latest',false]).then(function(j){return {h:parseInt(j.result.number,16),ts:parseInt(j.result.timestamp,16)*1000};});}
     // Solana / TON 都看最新区块的出块时间：只问节点健不健康的话，整条链一起停摆时看不出来
-    if(nd.t==='sol'){return jrpc(nd.u,'getSlot',[{commitment:'confirmed'}]).then(function(s){
-      return jrpc(nd.u,'getBlockTime',[s.result]).then(function(b){
-        if(b.result) return {h:s.result,ts:b.result*1000};
-        // 偶尔取不到出块时间：退回用节点健康状态判断
-        return jrpc(nd.u,'getHealth').then(function(a){return {h:s.result,health:a.result||(a.error&&a.error.message)||'?'};});
-      });
+    // Solana 读链上的时钟账户：一次请求就同时拿到 slot 和出块时间；拿不到就算这个节点失败，换下一个
+    if(nd.t==='sol'){return jrpc(nd.u,'getAccountInfo',['SysvarC1ock11111111111111111111111111111111',{encoding:'jsonParsed',commitment:'confirmed'}]).then(function(j){
+      var i=j.result.value.data.parsed.info;
+      if(!i.unixTimestamp) throw new Error('no block time');
+      return {h:i.slot,ts:i.unixTimestamp*1000};
     });}
     if(nd.t==='ton'){return tfetch(nd.u).then(function(r){return r.json();}).then(function(j){return {h:j.last.seqno,ts:j.last.gen_utime*1000};});}
     if(nd.t==='tonapi'){return tfetch(nd.u).then(function(r){return r.json();}).then(function(j){return {h:j.seqno,ts:j.gen_utime*1000};});}
@@ -1017,11 +1026,6 @@ __ROWS__
       if(age<=c.bt*30) return {cls:'warn',status:'出块变慢',meta:meta};
       return {cls:'bad',status:'疑似停摆/维护',meta:meta};
     }
-    if(c.t==='sol'){
-      var m1='slot '+d.h;
-      if(d.health==='ok') return {cls:'ok',status:'正常运行',meta:m1};
-      return {cls:'warn',status:'节点落后',meta:m1+' ｜ '+d.health};
-    }
     return {cls:'bad',status:'读取失败',meta:'取不到区块时间'};
   }
   function renderCard(c,res){
@@ -1047,7 +1051,14 @@ __ROWS__
       if(ss){ ss.textContent='● 链路全部正常'; ss.className='ok'; }
     }
   }
+  // 上一轮还没跑完（节点都卡住时一轮可能超过 15 秒）就先不开新的一轮：否则两轮的结果会互相盖掉
+  var busy=false,runId=0;
   function updateAll(){
+    if(busy)return; busy=true;
+    var my=++runId;
+    function done(){if(my===runId)busy=false;}
+    // 最多占 45 秒：万一有请求卡住一直不回来，也不会让整个面板停止更新
+    setTimeout(done,45000);
     Promise.all(CHAINS.map(function(c){
       return fetchChain(c).then(function(d){failN[c.k]=0;var res=judge(c,d);last[c.k]=d.h;return {c:c,res:res};})
       // 节点偶尔会限流或没回应：第一次读不到先标黄重试，连续两次才算异常，避免误报
@@ -1061,7 +1072,7 @@ __ROWS__
       });
       handleAlerts(newlyBad,badNow);
       var u=document.getElementById('upd'); if(u)u.textContent=bjClock();
-    });
+    }).then(done,done);
   }
   (function(){
     var g=document.getElementById('chaingrid');
@@ -1089,7 +1100,13 @@ __ROWS__
   updateRates();
   setInterval(updateRates,60000);
   // 公告数据每 5 分钟随页面自动刷新（重新载入 GitHub 最新生成的 index.html）
-  setTimeout(function(){ location.reload(); }, 300000);
+  // 先确认网页还连得上才重新载入：刚好断网时直接重新载入，会停在浏览器的错误页，之后就不会再自己刷新了
+  function autoReload(){
+    fetch(location.pathname+'?_='+Date.now(),{cache:'no-store'}).then(function(r){
+      if(r.ok) location.reload(); else setTimeout(autoReload,60000);
+    },function(){ setTimeout(autoReload,60000); });
+  }
+  setTimeout(autoReload, 300000);
 </script>
 <script>
 (function(){
@@ -1265,7 +1282,7 @@ __ROWS__
       return (gF==='all'||e.g===gF)&&(sF==='all'||s===sF);
     }).sort(function(a,b){ return (order[a.st]-order[b.st])||(a.st==='done'?b.e-a.e:a.s-b.s); });
     document.getElementById('banklist').innerHTML=list.map(function(e){return eventCard(e,'ex-bank');}).join('')||'<div class="empty">没有符合条件的公告<span>换个筛选条件试试</span></div>';
-    document.getElementById('bankupd').textContent=md(DATA.updated)+' '+hm(DATA.updated);
+    document.getElementById('bankupd').textContent=DATA.updated?(md(DATA.updated)+' '+hm(DATA.updated)):'抓取失败';
     var bsrc=DATA.sources.map(function(s){return s.name;}).filter(function(n){return n!=='支付宝开放平台';});
     document.getElementById('banksrc').textContent=srcLine(bsrc)+' · 人民银行清算总中心（年度安排）｜已过滤非维护类公告 '+skippedN(false)+' 条';
   }
@@ -1328,7 +1345,7 @@ __ROWS__
       return '<a class="card lvl-'+lv+'" href="'+esc(n.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex ex-ali">支付宝</span><span class="badge b-'+lv+'">'+(isNew?'维护 / 异常':'已过去')+'</span><span class="src">'+esc(n.src)+'</span><span class="time">'+ymd(n.pub)+'</span></div><div class="title">'+esc(n.title)+'</div></a>';
     }).join('');
     document.getElementById('alilist').innerHTML=html||'<div class="empty">近一年没有维护 / 异常类公告</div>';
-    document.getElementById('alifetch').textContent=md(DATA.updated)+' '+hm(DATA.updated);
+    document.getElementById('alifetch').textContent=DATA.updated?(md(DATA.updated)+' '+hm(DATA.updated)):'抓取失败';
     document.getElementById('alisrc').textContent=srcLine(['支付宝开放平台','易宝支付','快钱'])+'｜已过滤非维护类公告 '+skippedN(true)+' 条';
   }
   document.getElementById('alireload').addEventListener('click',function(ev){ev.preventDefault();checkGateways();});
