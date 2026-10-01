@@ -41,7 +41,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@users.noreply.github.com"
           # 逐个添加：任一文件不存在时，合在一起的 git add 会整条失败、什么都不保存
-          for f in pushed.txt chainlog.txt lastreport.txt; do
+          for f in pushed.txt chainlog.txt lastreport.txt bn-dates.txt srcfail.txt; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
           git commit -m "update pushed list [skip ci]" 2>/dev/null || true
