@@ -457,6 +457,8 @@ $tpl = @'
   .bgroup-h span{font-family:var(--mono);font-weight:400;color:var(--faint);font-size:11px}
   .btiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:6px}
   .btile{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;cursor:default}
+  a.btile{cursor:pointer;text-decoration:none;color:inherit;transition:border-color .12s}
+  a.btile:hover{border-color:var(--accent)}
   .btile i{width:7px;height:7px;border-radius:50%;background:var(--resume);flex:none}
   .btile span{overflow:hidden;text-overflow:ellipsis}
   .btile.warn{border-color:rgba(240,160,32,.5);background:rgba(240,160,32,.08);color:#f5c26b}
@@ -925,7 +927,10 @@ __ROWS__
         var s=status(b.s); cnt[s.kind]++;
         if(s.kind!=='ok') focus+='<div class="fcard '+s.cls+'"><div class="dot"></div><div class="cc-name">'+b.s+'<span>'+g.name+'</span></div><div class="cc-status">'+s.txt+'</div><div class="cc-meta">'+esc(s.meta)+'</div></div>';
         var hide=q&&(b.s+b.n).indexOf(q)<0;
-        tiles+='<div class="btile '+(s.kind==='ok'?'':s.cls)+(hide?' hide':'')+'" title="'+esc(b.n+' ｜ '+s.txt+' ｜ '+s.meta)+'"><i></i><span>'+b.s+'</span></div>';
+        // 有官网网址（banks.json 的 u）的银行可以点开官网，没填的维持不能点
+        var cls='btile '+(s.kind==='ok'?'':s.cls)+(hide?' hide':''),tip=esc(b.n+' ｜ '+s.txt+' ｜ '+s.meta);
+        tiles+=b.u?('<a class="'+cls+'" href="'+esc(b.u)+'" target="_blank" rel="noopener" title="'+tip+' ｜ 点击打开官网"><i></i><span>'+b.s+'</span></a>')
+                  :('<div class="'+cls+'" title="'+tip+'"><i></i><span>'+b.s+'</span></div>');
       });
       groups+='<div class="bgroup"><div class="bgroup-h">'+g.name+'<span>'+g.banks.length+' 家</span></div><div class="btiles">'+tiles+'</div></div>';
     });
@@ -1152,10 +1157,10 @@ if ($tgToken -and $tgChat) {
   @($nowBad) | Out-File -FilePath $chainLogFile -Encoding UTF8
   Write-Host "  链检测：当前异常 $($nowBad.Count) 条" -ForegroundColor Cyan
 
-  # ---- 每日定时排查报告（北京时间 12:00 与 00:00 各一次）----
-  # GitHub 定时触发不准时，错过整点那一小时也会在之后第一次运行时补发
+  # ---- 每小时定时排查报告（北京时间每个整点一次）----
+  # GitHub 定时触发不准时，整点没跑到也会在该小时内第一次运行时补发
   $bjNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(8))
-  $slot = $bjNow.ToString('yyyy-MM-dd') + $(if ($bjNow.Hour -ge 12) { '-noon' } else { '-midnight' })
+  $slot = $bjNow.ToString('yyyy-MM-dd-HH')
   if ($slot) {
     $reportFile = Join-Path $ScriptDir 'lastreport.txt'
     $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = ((Get-Content $reportFile -Encoding UTF8 -Raw)).Trim() }
@@ -1175,10 +1180,10 @@ if ($tgToken -and $tgChat) {
         if ($failBank.Count) { $bankLine += "（⚠ 来源连不上：$($failBank -join '、')）" }
         if ($failAli.Count)  { $aliLine  += '（⚠ 公告来源连不上）' }
       }
-      $report = "📊 监控台 · 每日排查`n$($bjNow.ToString('MM-dd HH:mm')) 北京`n———————`n链状态：$chainLine`nUSDT场外：买 ¥$okxBuy / 卖 ¥$okxSell`n近3天维护/暂停/升级：$($toNotify.Count) 条`n银行：$bankLine`n支付宝：$aliLine`n———————`nhttps://workschedule-netizen.github.io/crypto-monitor/"
+      $report = "📊 监控台 · 每小时排查`n$($bjNow.ToString('MM-dd HH:mm')) 北京`n———————`n链状态：$chainLine`nUSDT场外：买 ¥$okxBuy / 卖 ¥$okxSell`n近3天维护/暂停/升级：$($toNotify.Count) 条`n银行：$bankLine`n支付宝：$aliLine`n———————`nhttps://workschedule-netizen.github.io/crypto-monitor/"
       Send-TG $tgToken $tgChat $report
       $slot | Out-File -FilePath $reportFile -Encoding UTF8
-      Write-Host "  已发送每日排查报告（$slot）" -ForegroundColor Cyan
+      Write-Host "  已发送每小时排查报告（$slot）" -ForegroundColor Cyan
     }
   }
 }
