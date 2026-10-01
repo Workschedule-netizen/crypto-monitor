@@ -1,14 +1,14 @@
 {
-  "_note": "从后台截图整理（2026-09-29）。只列启用状态为 ON 的银行。kw 是匹配公告标题用的关键词；u 是银行官网，网页上点银行名会打开（不填就不能点）。",
+  "_note": "从后台截图整理（2026-09-29）。只列启用状态为 ON 的银行。kw 是匹配公告标题用的关键词（英文缩写后面的 (?![A-Za-z]) 是防止 BOC 认到 BOCOM、CMB 认到 CMBC）；u 是银行官网，网页上点银行名会打开（不填就不能点）。",
   "groups": [
     { "id": "state", "name": "国有大行", "banks": [
       { "n": "中国建设银行", "s": "建设银行", "kw": "建设银行|建行|CCB", "u": "https://www.ccb.com/" },
       { "n": "中国邮政储蓄银行", "s": "邮储银行", "kw": "邮储|邮政储蓄|PSBC", "u": "https://www.psbc.com/" },
-      { "n": "中国银行", "s": "中国银行", "kw": "中国银行|中行|BOC", "u": "https://www.boc.cn/" },
+      { "n": "中国银行", "s": "中国银行", "kw": "中国银行|中行|BOC(?![A-Za-z])","u": "https://www.boc.cn/" },
       { "n": "交通银行", "s": "交通银行", "kw": "交通银行|交行|BOCOM", "u": "https://www.bankcomm.com/" }
     ]},
     { "id": "joint", "name": "股份制银行", "banks": [
-      { "n": "招商银行", "s": "招商银行", "kw": "招商银行|招行|CMB", "u": "https://www.cmbchina.com/" },
+      { "n": "招商银行", "s": "招商银行", "kw": "招商银行|招行|CMB(?![A-Za-z])","u": "https://www.cmbchina.com/" },
       { "n": "浦发银行", "s": "浦发银行", "kw": "浦发|浦东发展|SPDB", "u": "https://www.spdb.com.cn/" },
       { "n": "中国光大银行", "s": "光大银行", "kw": "光大银行|CEB", "u": "https://www.cebbank.com/" },
       { "n": "中信银行", "s": "中信银行", "kw": "中信银行|CITIC", "u": "https://www.citicbank.com/" },

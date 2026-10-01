@@ -21,20 +21,34 @@ $AlertKw  = '暂停|暫停|维护|維護|升級|升级|停机|停止|下架|终�
 $ResumeKw = '恢復|恢复|重新开放|重新開放|已完成|已恢复|已恢復|开放充值|開放充值|恢复充值|恢复提|resume|resumption|reopen|resumed|completed|restored'
 
 # 链识别（只保留目标 5 条链）
+# TRON / TRC 前后不能紧挨英文字母，否则 Neutron（NTRN）会被当成 TRON
+# Toncoin 已改名 Gram（GRAM），两种叫法都算 TON 链
 $ChainMap = [ordered]@{
-  'TRON' = 'TRON|TRC20|TRC-20|TRC|波场|波場|Tron'
+  'TRON' = '(?<![A-Za-z])TRON(?![A-Za-z])|(?<![A-Za-z])TRC(?:-?20)?(?![A-Za-z])|波场|波場'
   'BSC'  = '\bBSC\b|BEP20|BEP-20|BNB Smart|BNB Chain|币安智能链|幣安智能鏈|BNB链|BNB鏈|OpBNB'
   'ETH'  = 'ERC20|ERC-20|以太坊|Ethereum|ETH网络|ETH網絡'
-  'TON'  = 'Toncoin|TON网络|TON網絡|TON链|TON鏈|The Open Network|\bTON\b'
+  'TON'  = 'Toncoin|TON网络|TON網絡|TON链|TON鏈|The Open Network|\bTON\b|(?<![A-Za-z])GRAM(?![A-Za-z])'
   'SOL'  = 'Solana|SOLANA|\bSPL\b|SOL网络|SOL網絡|索拉纳|\bSOL\b'
 }
 
 # 严格过滤：只要「涉及5链的充提/维护」或「交易所系统维护」
 $StrictKw = '暂停|暫停|维护|維護|停机|停機|停充|停提|充值|儲值|提现|提幣|提币|充提|终止|終止|升级|升級|硬分叉|快照|snapshot|suspend|suspension|maintenance|deposit|withdraw|恢复|恢復|resume|Paused|Delayed|Sends|Receives|halt|hard fork|upgrade'
 # 交易所整体维护（不依赖具体链）
-$SysKw    = '系统维护|系統維護|系统升级|系統升級|平台维护|平台維護|停机维护|停機維護|系统公告|系統公告|系统故障|系統故障|System Maintenance'
+$SysKw    = '系统维护|系統維護|系统升级|系統升級|平台维护|平台維護|停机维护|停機維護|系统公告|系統公告|系统故障|系統故障|System Maintenance|System Upgrade'
+# 没点名哪条链的钱包 / 充提维护（「关于钱包维护的公告」「对部分网络 USDC 提现维护」）：可能波及目标链，也保留
+$MultiKw  = '关于钱包维护|關於錢包維護|部分网络\S{0,16}维护|部分網[絡路]\S{0,16}維護'
 # 明确排除（活动/理财/合约等杂项，命中即丢弃）
 $ExcludeKw = '空投|理财|理財|竞赛|競賽|活动|活動|Alpha|HODLer|Launchpool|Megadrop|奖励|獎勵|瓜分|持币|持幣|盘前|盤前|Pre-IPO|合约|合約|风险限额|風險限額|返佣|限时|限時|上线|上線|上市|理财竞技|杠杆|槓桿|保证金|保證金'
+
+# ============ 时间：虚拟币分页一律用北京时间（跟银行分页一致），不管脚本跑在哪个时区的机器上 ============
+# 接受 DateTimeOffset / DateTime / ISO 字符串，回传北京时间
+function To-BJ($v) {
+  if ($v -is [DateTimeOffset]) { $dto = $v }
+  elseif ($v -is [datetime]) { $dto = [DateTimeOffset]$v }
+  else { $dto = [DateTimeOffset]::Parse([string]$v, [System.Globalization.CultureInfo]::InvariantCulture) }
+  return $dto.ToOffset([TimeSpan]::FromHours(8)).DateTime
+}
+$nowBJ = To-BJ ([DateTimeOffset]::UtcNow)
 
 function Get-Chains($title) {
   $found = @()
@@ -42,12 +56,14 @@ function Get-Chains($title) {
   return $found
 }
 function Get-Level($title, $t) {
+  # 新增网络 / 代币支持（「完成…网络集成，并开放充值」）不是恢复，只算相关
+  if ($title -match '网络集成|網絡集成|網路整合|专属充值地址|專屬充值地址') { return 'info' }
   # 明确"已恢复/已完成"
   if ($title -match '恢復|恢复|已完成|已恢復|重新开放|重新開放|开放充值|開放充值|resume|resumed|completed|restored') { return 'resume' }
   # "暂停/停机/维护"类（真正需要注意的）
   if ($title -match '暂停|暫停|停止|停机|停機|停充|停提|維護|维护|suspend|suspension|paused|halt|delayed|maintenance') {
-    # 超过 3 天前的，视为早已恢复/已过去，不再红色警报
-    if ($t -and ($t -lt (Get-Date).AddDays(-3))) { return 'resume' }
+    # 超过 3 天前的不再红色警报；公告没说已恢复，所以只标「已过去」，不标「已恢复」
+    if ($t -and ($t -lt $nowBJ.AddDays(-3))) { return 'past' }
     return 'alert'
   }
   # 升级 / 硬分叉（专属标签）
@@ -60,6 +76,7 @@ function Should-Keep($title) {
   if ($title -match $ExcludeKw) { return $false }
   if ($title -match $SysKw) { return $true }
   if (($title -match $StrictKw) -and ((Get-Chains $title).Count -gt 0)) { return $true }
+  if ($title -match $MultiKw) { return $true }
   return $false
 }
 # Coinbase 英文标题 → 中文（措辞固定，规则翻译）
@@ -77,6 +94,8 @@ function Translate-CB($t) {
   $t = $t -replace 'Paused Sends','暂停提现'
   $t = $t -replace 'Resumed Receives','恢复充值'
   $t = $t -replace 'Resumed Sends','恢复提现'
+  $t = $t -replace 'Scheduled System Upgrade','计划系统升级'
+  $t = $t -replace 'System Upgrade','系统升级'
   $t = $t -replace 'Scheduled System Maintenance','计划系统维护'
   $t = $t -replace 'Scheduled [Mm]aintenance','计划维护'
   $t = $t -replace 'System Maintenance','系统维护'
@@ -139,12 +158,23 @@ function Test-Chain($type, $url, $maxAgeSec) {
       if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
     }
     if ($type -eq 'sol') {
+      # getHealth 只是跟其他节点比进度，整条链一起停摆时照样回 ok，所以改看最新区块的出块时间
+      $s = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"getSlot","params":[{"commitment":"confirmed"}],"id":1}' -ContentType 'application/json' -TimeoutSec 15
+      $b = Invoke-RestMethod -Uri $url -Method Post -Body ('{"jsonrpc":"2.0","method":"getBlockTime","params":[' + [int64]$s.result + '],"id":1}') -ContentType 'application/json' -TimeoutSec 15
+      if ($b.result) {
+        $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$b.result
+        if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
+      }
+      # 偶尔取不到出块时间：退回用节点健康状态判断
       $r = Invoke-RestMethod -Uri $url -Method Post -Body '{"jsonrpc":"2.0","method":"getHealth","id":1}' -ContentType 'application/json' -TimeoutSec 15
       if ($r.result -eq 'ok') { return $null } else { return "节点健康异常" }
     }
     if ($type -eq 'ton') {
+      # v3 接口带最新主链区块的生成时间，可以看出链有没有停
       $r = Invoke-RestMethod -Uri $url -TimeoutSec 15
-      if ([int64]$r.result.last.seqno -gt 0) { return $null } else { return "无法获取区块" }
+      if (-not $r.last.gen_utime) { return "无法获取区块" }
+      $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$r.last.gen_utime
+      if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
     }
     return $null
   } catch { return "连接失败/无响应" }
@@ -155,7 +185,7 @@ $items = New-Object System.Collections.ArrayList
 # ============ 币安 Binance ============
 $bnHeaders = @{ 'Accept'='application/json'; 'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)'; 'lang'='zh-CN'; 'clienttype'='web' }
 # 币安用 catalog/list/query（可返回多条）；48=上币 49=最新消息 161=上新 128/93=其他
-# 该接口无 releaseDate，时间取标题内日期，没有则用当天
+# 列表接口不给发布时间：先取标题里的日期；标题没有日期的，再查这篇公告的详情拿真正的发布时间
 foreach ($cid in 48,49,157,161,128,93) {
   foreach ($pno in 1,2,3,4) {
     Start-Sleep -Milliseconds 200
@@ -164,10 +194,21 @@ foreach ($cid in 48,49,157,161,128,93) {
       if (-not $r.data.articles -or @($r.data.articles).Count -eq 0) { break }
       foreach ($a in $r.data.articles) {
         if (Should-Keep $a.title) {
-          $t = Get-Date
-          if ($a.title -match '(\d{4}-\d{2}-\d{2})') { try { $t = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null) } catch {} }
+          # 币安中文公告标题里的日期就是东八区（北京时间）的日期；只有日期没有钟点，网页上只显示日期
+          $t = $null; $dateOnly = $false
+          if ($a.title -match '(\d{4}-\d{2}-\d{2})') { try { $t = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null); $dateOnly = $true } catch {} }
+          if (-not $t) {
+            try {
+              Start-Sleep -Milliseconds 200
+              $det = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode=$($a.code)" $bnHeaders
+              if ($det.data.publishDate) { $t = To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$det.data.publishDate)) }
+            } catch {}
+          }
+          # 两边都拿不到才用当天（会被当成今天的公告）
+          if (-not $t) { $t = $nowBJ }
           [void]$items.Add([pscustomobject]@{
             Exchange = 'Binance'
+            DateOnly = $dateOnly
             Time     = $t
             Title    = [string]$a.title
             Url      = "https://www.binance.com/zh-CN/support/announcement/$($a.code)"
@@ -189,7 +230,7 @@ foreach ($pg in 1..5) {
     if ($r.data.Count -gt 0) {
       foreach ($d in $r.data[0].details) {
         if (-not (Should-Keep $d.title)) { continue }
-        $t = try { [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$d.pTime).LocalDateTime } catch { Get-Date }
+        $t = try { To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$d.pTime)) } catch { $nowBJ }
         [void]$items.Add([pscustomobject]@{
           Exchange = 'OKX'
           Time     = $t
@@ -210,7 +251,7 @@ try {
   $inc = Get-Json "https://status.coinbase.com/api/v2/incidents.json" $cbHeaders
   foreach ($e in $inc.incidents) {
     if (Should-Keep $e.name) {
-      $t = try { [datetime]$e.created_at } catch { Get-Date }
+      $t = try { To-BJ $e.created_at } catch { $nowBJ }
       $lv = if ($e.status -match 'resolved|completed|postmortem') { 'resume' } else { 'alert' }
       [void]$items.Add([pscustomobject]@{
         Exchange = 'Coinbase'; Time = $t; Title = (Translate-CB ([string]$e.name)); Url = [string]$e.shortlink
@@ -224,7 +265,7 @@ try {
   $mnt = Get-Json "https://status.coinbase.com/api/v2/scheduled-maintenances.json" $cbHeaders
   foreach ($e in $mnt.scheduled_maintenances) {
     if (Should-Keep $e.name) {
-      $t = try { [datetime]$e.scheduled_for } catch { Get-Date }
+      $t = try { To-BJ $e.scheduled_for } catch { $nowBJ }
       $lv = if ($e.status -match 'completed') { 'resume' } else { 'alert' }
       [void]$items.Add([pscustomobject]@{
         Exchange = 'Coinbase'; Time = $t; Title = (Translate-CB ([string]$e.name)); Url = [string]$e.shortlink
@@ -238,28 +279,29 @@ try {
 $okxBuy='—'; $okxSell='—'
 try {
   $tms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-  # side=sell：商家卖USDT = 你买入USDT的价（取最低=最优）
+  # 取最优 10 档的中位价：只取最优那一档的话，偶尔会被单笔门槛很高的广告带偏（出现买入价比卖出价还低）
+  # side=sell：商家卖USDT = 你买入USDT的价（越低越优）
   $sd=Get-Json "https://www.okx.com/v3/c2c/tradingOrders/books?t=$tms&quoteCurrency=CNY&baseCurrency=USDT&side=sell&paymentMethod=all&userType=all&showTrade=false&showFollow=false&showAlreadyTraded=false&isAbleFilter=false&currentPage=1&numberPerPage=10" $okxHeaders
-  $sp=@($sd.data.sell | ForEach-Object { [double]$_.price })
-  if ($sp.Count) { $okxBuy = ('{0:0.00}' -f ($sp | Measure-Object -Minimum).Minimum) }
-  # side=buy：商家买USDT = 你卖出USDT的价（取最高=最优）
+  $sp=@($sd.data.sell | ForEach-Object { [double]$_.price } | Sort-Object | Select-Object -First 10)
+  if ($sp.Count) { $okxBuy = ('{0:0.00}' -f (($sp[[int][Math]::Floor(($sp.Count - 1) / 2)] + $sp[[int][Math]::Floor($sp.Count / 2)]) / 2)) }
+  # side=buy：商家买USDT = 你卖出USDT的价（越高越优）
   $bd=Get-Json "https://www.okx.com/v3/c2c/tradingOrders/books?t=$tms&quoteCurrency=CNY&baseCurrency=USDT&side=buy&paymentMethod=all&userType=all&showTrade=false&showFollow=false&showAlreadyTraded=false&isAbleFilter=false&currentPage=1&numberPerPage=10" $okxHeaders
-  $bp=@($bd.data.buy | ForEach-Object { [double]$_.price })
-  if ($bp.Count) { $okxSell = ('{0:0.00}' -f ($bp | Measure-Object -Maximum).Maximum) }
+  $bp=@($bd.data.buy | ForEach-Object { [double]$_.price } | Sort-Object -Descending | Select-Object -First 10)
+  if ($bp.Count) { $okxSell = ('{0:0.00}' -f (($bp[[int][Math]::Floor(($bp.Count - 1) / 2)] + $bp[[int][Math]::Floor($bp.Count / 2)]) / 2)) }
   Write-Host "  OKX 场外 USDT：买入 $okxBuy / 卖出 $okxSell" -ForegroundColor Green
 } catch { Write-Host "    OKX 场外价抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
 # ============ 去重 + 只保留近一年 + 排序 ============
-$oneYearAgo = (Get-Date).AddYears(-1)
+$oneYearAgo = $nowBJ.AddYears(-1)
 $items = $items | Where-Object { $_.Time -ge $oneYearAgo } | Sort-Object Time -Descending | Group-Object Url | ForEach-Object { $_.Group[0] } | Sort-Object Time -Descending
 
-$today = (Get-Date).Date
+$today = $nowBJ.Date
 $todayAlerts = @($items | Where-Object { $_.Level -eq 'alert' -and $_.Time.Date -eq $today }).Count
 $totalCount = @($items).Count
 Write-Host "  完成：共 $totalCount 条相关公告，其中今日维护/暂停 $todayAlerts 条" -ForegroundColor Green
 
 # ============ 生成公告行 HTML ============
-$levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'upgrade'='升级'; 'info'='相关' }
+$levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'past'='已过去'; 'upgrade'='升级'; 'info'='相关' }
 $exClass   = @{ 'Binance'='ex-bn'; 'OKX'='ex-okx'; 'Coinbase'='ex-cb' }
 $rowsSb = New-Object System.Text.StringBuilder
 if ($totalCount -eq 0) {
@@ -271,7 +313,7 @@ if ($totalCount -eq 0) {
     foreach ($c in $it.Chains) { $chipHtml += "<span class='chip'>$c</span>" }
     if (-not $chipHtml) { $chipHtml = "<span class='chip chip-none'>其他/多链</span>" }
     $isToday = if ($it.Time.Date -eq $today) { "<span class='today'>今天</span>" } else { '' }
-    $timeStr = $it.Time.ToString('MM-dd HH:mm')
+    $timeStr = if ($it.DateOnly) { $it.Time.ToString('MM-dd') } else { $it.Time.ToString('MM-dd HH:mm') }
     $lvl = $it.Level
     $ltxt = $levelText[$lvl]
     $exc = $exClass[$it.Exchange]
@@ -290,7 +332,7 @@ if ($totalCount -eq 0) {
 }
 $rows = $rowsSb.ToString()
 
-$updated = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+$updated = $nowBJ.ToString('yyyy-MM-dd HH:mm:ss')
 $bannerClass = if ($todayAlerts -gt 0) { 'has-alert' } else { 'no-alert' }
 $bannerText  = if ($todayAlerts -gt 0) { "今日发现 $todayAlerts 条维护 / 暂停公告，请留意相关链的充提" } else { "今日暂无新的维护 / 暂停公告" }
 
@@ -352,7 +394,7 @@ $tpl = @'
   .card.lvl-alert{border-left-color:var(--alert)}
   .card.lvl-resume{border-left-color:var(--resume)}
   .card.lvl-upgrade{border-left-color:#58a6ff}
-  .card.lvl-info{border-left-color:var(--faint)}
+  .card.lvl-info,.card.lvl-past{border-left-color:var(--faint)}
   .row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
   .ex{font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px}
   .ex-bn{background:var(--gold);color:#1a1200}
@@ -362,7 +404,7 @@ $tpl = @'
   .b-alert{background:rgba(234,57,67,.15);color:#ff8a8f}
   .b-resume{background:rgba(22,199,132,.15);color:#5fe0aa}
   .b-upgrade{background:rgba(88,166,255,.15);color:#79b8ff}
-  .b-info{background:rgba(122,136,150,.15);color:var(--sub)}
+  .b-info,.b-past{background:rgba(122,136,150,.15);color:var(--sub)}
   .chip{font-family:var(--mono);font-size:11px;font-weight:600;padding:2px 7px;border-radius:5px;background:rgba(61,155,255,.12);color:#7cc0ff;border:1px solid rgba(61,155,255,.25)}
   .chip-none{background:rgba(122,136,150,.1);color:var(--sub);border-color:var(--line)}
   .time{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--sub);white-space:nowrap}
@@ -568,7 +610,7 @@ $tpl = @'
   </div>
   <div class="usdtwrap">
     <div class="usdtbox okx">
-      <div class="ub-top">OKX 场外 · USDT / CNY<span class="ub-tag">快照 __UPDATED__</span></div>
+      <div class="ub-top">OKX 场外 · USDT / CNY<span class="ub-tag">最优 10 档中位价 · 快照 __UPDATED__</span></div>
       <div class="ub-prices">
         <div class="ub-cell"><span>购买（你买入）</span><b class="buy">¥__OKXBUY__</b></div>
         <div class="ub-cell"><span>出售（你卖出）</span><b class="sell">¥__OKXSELL__</b></div>
@@ -610,7 +652,7 @@ __ROWS__
   <div class="pager" id="pager"></div>
 </div>
 <footer>
-  公告更新时间：__UPDATED__（UTC）｜ 来源：Binance / OKX / Coinbase 官方接口 · 每 5 分钟由 GitHub 自动更新<br>
+  公告更新时间：__UPDATED__（北京时间，公告时间也都是北京时间）｜ 来源：Binance / OKX / Coinbase 官方接口 · 每 5 分钟由 GitHub 自动更新<br>
   链实时状态 &amp; 汇率：网页内每 15~60 秒自动刷新（TronGrid / PublicNode / Toncenter / CoinGecko）<br>
   仅显示近一年内、涉及 TRON/BSC/ETH/TON/SOL 或交易所系统维护的公告 ｜ 点卡片可跳转官方原文
 </footer>
@@ -750,16 +792,25 @@ __ROWS__
     {k:'TRON',n:'TRON',s:'TRC20',t:'tron',u:'https://api.trongrid.io/wallet/getnowblock',bt:3},
     {k:'BSC', n:'BSC', s:'BEP20',t:'evm', u:'https://bsc-rpc.publicnode.com',bt:3},
     {k:'ETH', n:'Ethereum',s:'ERC20',t:'evm',u:'https://ethereum-rpc.publicnode.com',bt:12},
-    {k:'SOL', n:'Solana',s:'SPL', t:'sol', u:'https://solana-rpc.publicnode.com',bt:1},
-    {k:'TON', n:'TON', s:'TON',  t:'ton', u:'https://toncenter.com/api/v2/getMasterchainInfo',bt:5}
+    {k:'SOL', n:'Solana',s:'SPL', t:'sol', u:'https://solana-rpc.publicnode.com',bt:2},
+    {k:'TON', n:'TON', s:'TON',  t:'ton', u:'https://toncenter.com/api/v3/masterchainInfo',bt:5}
   ];
-  var last={};
+  var last={},failN={};
+  // 页面上的「更新 xx:xx:xx」一律显示北京时间，不跟着看网页的那台设备的时区走
+  function bjClock(){var d=new Date(Date.now()+8*3600000);function p(n){return (n<10?'0':'')+n;}return p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());}
   function jrpc(u,m,p){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:m,params:p||[],id:1})}).then(function(r){return r.json();});}
   function fetchChain(c){
     if(c.t==='tron'){return fetch(c.u,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){return {h:j.block_header.raw_data.number,ts:j.block_header.raw_data.timestamp};});}
     if(c.t==='evm'){return jrpc(c.u,'eth_getBlockByNumber',['latest',false]).then(function(j){return {h:parseInt(j.result.number,16),ts:parseInt(j.result.timestamp,16)*1000};});}
-    if(c.t==='sol'){return Promise.all([jrpc(c.u,'getHealth'),jrpc(c.u,'getSlot')]).then(function(a){var health=a[0].result||(a[0].error&&a[0].error.message)||'?';return {h:a[1].result,health:health};});}
-    if(c.t==='ton'){return fetch(c.u).then(function(r){return r.json();}).then(function(j){return {h:j.result.last.seqno};});}
+    // Solana / TON 都看最新区块的出块时间：只问节点健不健康的话，整条链一起停摆时看不出来
+    if(c.t==='sol'){return jrpc(c.u,'getSlot',[{commitment:'confirmed'}]).then(function(s){
+      return jrpc(c.u,'getBlockTime',[s.result]).then(function(b){
+        if(b.result) return {h:s.result,ts:b.result*1000};
+        // 偶尔取不到出块时间：退回用节点健康状态判断
+        return jrpc(c.u,'getHealth').then(function(a){return {h:s.result,health:a.result||(a.error&&a.error.message)||'?'};});
+      });
+    });}
+    if(c.t==='ton'){return fetch(c.u).then(function(r){return r.json();}).then(function(j){return {h:j.last.seqno,ts:j.last.gen_utime*1000};});}
   }
   function judge(c,d){
     var now=Date.now();
@@ -775,12 +826,7 @@ __ROWS__
       if(d.health==='ok') return {cls:'ok',status:'正常运行',meta:m1};
       return {cls:'warn',status:'节点落后',meta:m1+' ｜ '+d.health};
     }
-    if(c.t==='ton'){
-      var m2='seqno '+d.h;
-      if(last[c.k]==null) return {cls:'ok',status:'已连接',meta:m2};
-      if(d.h>last[c.k]) return {cls:'ok',status:'正常运行',meta:m2};
-      return {cls:'bad',status:'区块未推进',meta:m2};
-    }
+    return {cls:'bad',status:'读取失败',meta:'取不到区块时间'};
   }
   function renderCard(c,res){
     var el=document.getElementById('cc-'+c.k); if(!el)return;
@@ -807,8 +853,9 @@ __ROWS__
   }
   function updateAll(){
     Promise.all(CHAINS.map(function(c){
-      return fetchChain(c).then(function(d){var res=judge(c,d);last[c.k]=d.h;return {c:c,res:res};})
-      .catch(function(e){return {c:c,res:{cls:'bad',status:'读取失败',meta:'节点无响应'}};});
+      return fetchChain(c).then(function(d){failN[c.k]=0;var res=judge(c,d);last[c.k]=d.h;return {c:c,res:res};})
+      // 节点偶尔会限流或没回应：第一次读不到先标黄重试，连续两次才算异常，避免误报
+      .catch(function(e){failN[c.k]=(failN[c.k]||0)+1;return {c:c,res:failN[c.k]>=2?{cls:'bad',status:'读取失败',meta:'节点连续无响应'}:{cls:'warn',status:'读取失败 · 重试中',meta:'节点暂时无响应'}};});
     })).then(function(arr){
       var newlyBad=[],badNow=[];
       arr.forEach(function(x){
@@ -817,7 +864,7 @@ __ROWS__
         prevCls[x.c.k]=x.res.cls;
       });
       handleAlerts(newlyBad,badNow);
-      var u=document.getElementById('upd'); if(u)u.textContent=new Date().toLocaleTimeString();
+      var u=document.getElementById('upd'); if(u)u.textContent=bjClock();
     });
   }
   (function(){
@@ -840,7 +887,7 @@ __ROWS__
       var e=document.getElementById('mktcny'); if(e)e.textContent='¥'+x.cny.toFixed(2);
       var chg=x.cny_24h_change||0; var ce=document.getElementById('mktchg');
       if(ce){ ce.textContent=(chg>=0?'↑ +':'↓ ')+chg.toFixed(2)+'%'; ce.className='rc-chg '+(chg>=0?'up':'down'); }
-      var u=document.getElementById('rateupd'); if(u)u.textContent=new Date().toLocaleTimeString();
+      var u=document.getElementById('rateupd'); if(u)u.textContent=bjClock();
     }).catch(function(e){ var u=document.getElementById('rateupd'); if(u)u.textContent='读取失败(稍后重试)'; });
   }
   updateRates();
@@ -1038,7 +1085,7 @@ __ROWS__
         .catch(function(){clearTimeout(to);return {cls:'bad',status:'连不上',meta:'10 秒内无响应'};});
     })).then(function(arr){
       gw=arr; renderAlipay();
-      document.getElementById('aliupd').textContent=new Date().toLocaleTimeString();
+      document.getElementById('aliupd').textContent=bjClock();
     });
   }
   function renderAlipay(){
@@ -1140,7 +1187,7 @@ $tgToken = $env:TG_TOKEN; $tgChat = $env:TG_CHAT
 if ($tgToken -and $tgChat) {
   $pushedFile = Join-Path $ScriptDir 'pushed.txt'
   $pushed = @(); if (Test-Path $pushedFile) { $pushed = @(Get-Content $pushedFile -Encoding UTF8) }
-  $recent = (Get-Date).AddDays(-3)
+  $recent = $nowBJ.AddDays(-3)
   $toNotify = @($items | Where-Object { ($_.Level -eq 'alert' -or $_.Level -eq 'upgrade') -and $_.Time -ge $recent })
   $newCount = 0
   foreach ($n in $toNotify) {
@@ -1197,12 +1244,14 @@ if ($tgToken -and $tgChat) {
     @{ n='TRON'; t='tron'; u='https://api.trongrid.io/wallet/getnowblock'; age=180 },
     @{ n='BSC';  t='evm';  u='https://bsc-rpc.publicnode.com'; age=120 },
     @{ n='ETH';  t='evm';  u='https://ethereum-rpc.publicnode.com'; age=300 },
-    @{ n='SOL';  t='sol';  u='https://solana-rpc.publicnode.com'; age=0 },
-    @{ n='TON';  t='ton';  u='https://toncenter.com/api/v2/getMasterchainInfo'; age=0 }
+    @{ n='SOL';  t='sol';  u='https://solana-rpc.publicnode.com'; age=120 },
+    @{ n='TON';  t='ton';  u='https://toncenter.com/api/v3/masterchainInfo'; age=180 }
   )
   $nowBad = @()
   foreach ($ch in $chainDefs) {
     $reason = Test-Chain $ch.t $ch.u $ch.age
+    # 第一次异常先等几秒再测一次，两次都异常才算：避免节点偶尔没回应就误报
+    if ($reason) { Start-Sleep -Seconds 4; $reason = Test-Chain $ch.t $ch.u $ch.age }
     if ($reason) {
       $nowBad += $ch.n
       if ($prevBad -notcontains $ch.n) { Send-TG $tgToken $tgChat "🔴 链异常 · $($ch.n)`n$reason`n请留意该链充提是否受影响。" }
@@ -1219,7 +1268,7 @@ if ($tgToken -and $tgChat) {
   $slot = $bjNow.ToString('yyyy-MM-dd-HH')
   if ($slot) {
     $reportFile = Join-Path $ScriptDir 'lastreport.txt'
-    $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = ((Get-Content $reportFile -Encoding UTF8 -Raw)).Trim() }
+    $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = "$(Get-Content $reportFile -Encoding UTF8 -Raw)".Trim() }
     if ($slot -ne $lastSlot) {
       $chainLine = if ($nowBad.Count -eq 0) { '五条链全部正常 ✅' } else { '⚠ 异常：' + ($nowBad -join '、') }
       $bankLine = '抓取失败 ⚠'; $aliLine = '抓取失败 ⚠'
