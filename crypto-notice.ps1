@@ -638,8 +638,12 @@ $tpl = @'
   .tab.active::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--resume)}
   .tab[data-view="bank"].active::after{background:var(--accent)}
   .tab[data-view="alipay"].active::after{background:#1677ff}
+  /* 支付宝网关的格子：栏数跟着 banks.json 里的网关数量走（c1 ~ c4） */
+  .chaingrid.c1{grid-template-columns:1fr}
+  .chaingrid.c2{grid-template-columns:repeat(2,1fr)}
+  .chaingrid.c3{grid-template-columns:repeat(3,1fr)}
   .chaingrid.c4{grid-template-columns:repeat(4,1fr)}
-  @media(max-width:680px){.chaingrid.c4{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:680px){.chaingrid.c3,.chaingrid.c4{grid-template-columns:repeat(2,1fr)}}
   .tab svg{flex:none;opacity:.55}
   .tab.active svg{opacity:1}
   .tab-txt{display:flex;flex-direction:column;font-size:15px;font-weight:700;letter-spacing:-.01em;min-width:0}
@@ -1298,6 +1302,7 @@ __ROWS__
   function renderAlipay(){
     var now=Date.now(),ev=(AD.events||[]).slice(),nt=(AD.notices||[]).slice();
     ev.forEach(function(e){e.st=st(e,now);});
+    document.getElementById('aligrid').className='chaingrid c'+Math.min(Math.max(ALI.gateways.length,1),4);
     document.getElementById('aligrid').innerHTML=ALI.gateways.map(function(g,i){
       var r=gw?gw[i]:{cls:'',status:'检测中…',meta:'—'};
       return '<div class="chaincard '+r.cls+'"><div class="dot"></div><div class="cc-name">'+esc(g.n)+'<span>'+esc(g.s)+'</span></div><div class="cc-status">'+r.status+'</div><div class="cc-meta">'+r.meta+'</div></div>';
