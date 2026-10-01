@@ -65,9 +65,20 @@ Write-Host '  正在抓取 银行 / 支付宝 维护公告 ...' -ForegroundColor
 
 # 每个来源除了 ok（连不连得上），还有 warn：连得上、但内容读不出来（多半是对方网页改版，解析规则要跟着改）
 # 这种情况不提醒的话，会一直显示「无维护」而没人发现
+# err 是连不上时的原因（最多 220 个字），网页页脚和 Telegram 提醒里会带上
+# 连内层的原因一起记：像「SSL 连接建立失败」这种，真正的原因写在内层
+function Err-Text($e) {
+  $parts = @()
+  if ($e -is [Exception]) {
+    while ($e -and ($parts.Count -lt 5)) { if ($parts -notcontains $e.Message) { $parts += $e.Message }; $e = $e.InnerException }
+  } else { $parts = @("$e") }
+  $s = (($parts -join ' ← ') -replace '\s+', ' ').Trim()
+  if ($s.Length -gt 220) { $s = $s.Substring(0, 220) + '…' }
+  return $s
+}
 
 # ============ 易宝支付：当前生效的公告列表 + 每条详情 ============
-$n = 0; $ok = $false; $warn = ''; $badFmt = 0
+$n = 0; $ok = $false; $warn = ''; $err = ''; $badFmt = 0
 try {
   $list = Get-Page 'https://www.yeepay.com/all-notices'
   $ok = $true
@@ -106,11 +117,11 @@ try {
   # 这个列表平常一定有几条公告（声明、结算安排…），一条都抓不到就是列表页改版了
   if ($seen.Count -eq 0) { $warn = '公告列表抓到 0 条，网页格式可能已变' }
   elseif ($badFmt) { $warn = "$badFmt 条公告格式认不出，网页格式可能已变" }
-} catch { Write-Host "    易宝支付 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
-[void]$sources.Add([pscustomobject]@{ name = '易宝支付'; ok = $ok; count = $n; warn = $warn })
+} catch { $err = Err-Text $_.Exception; Write-Host "    易宝支付 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+[void]$sources.Add([pscustomobject]@{ name = '易宝支付'; ok = $ok; count = $n; warn = $warn; err = $err })
 
 # ============ 快钱：「最新银行维护通知」单页 ============
-$n = 0; $ok = $false; $warn = ''
+$n = 0; $ok = $false; $warn = ''; $err = ''
 try {
   $url = 'https://help.99bill.com/index.php/%E5%BF%AB%E9%92%B1%E9%80%9A%E7%9F%A5/%E9%93%B6%E8%A1%8C%E9%A2%9D%E5%BA%A6%E8%B0%83%E6%95%B4%E9%80%9A%E7%9F%A5/2888-10%E6%9C%88%E6%9C%80%E6%96%B0%E9%93%B6%E8%A1%8C%E7%BB%B4%E6%8A%A4%E9%80%9A%E7%9F%A5.html'
   $page = Get-Page $url
@@ -127,8 +138,8 @@ try {
   $loose = [regex]::Matches($txt, '银行方将于').Count
   if ([regex]::Match($page, '(?s)<title>(.*?)</title>').Groups[1].Value -notmatch '银行维护通知') { $warn = '页面不是银行维护通知，网址可能已失效' }
   elseif ($loose -gt $n) { $warn = "有 $($loose - $n) 条通知格式认不出" }
-} catch { Write-Host "    快钱 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
-[void]$sources.Add([pscustomobject]@{ name = '快钱'; ok = $ok; count = $n; warn = $warn })
+} catch { $err = Err-Text $_.Exception; Write-Host "    快钱 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+[void]$sources.Add([pscustomobject]@{ name = '快钱'; ok = $ok; count = $n; warn = $warn; err = $err })
 
 # ============ 银行官网公告（中国银行 / 招商银行 / 中信银行 / 建设银行） ============
 # 官方来源，但讲的是「部分服务可能受影响」，不等于通道不可用。
@@ -282,19 +293,19 @@ foreach ($o in @(
   @{ bank = '中信银行'; fn = 'Fetch-CITIC' }, @{ bank = '建设银行'; fn = 'Fetch-CCB' }
 )) {
   if (-not (Find-Bank $o.bank)) { continue }   # 后台没启用的银行不抓
-  $src = "$($o.bank)官网"; $n = 0; $ok = $false; $warn = ''
+  $src = "$($o.bank)官网"; $n = 0; $ok = $false; $warn = ''; $err = ''
   $script:offListN = 0   # 各家的抓取函数会把「公告列表认出几条」写在这里
   try {
     $n = & $o.fn $o.bank $src; $ok = $true
     # 银行官网的公告列表不会是空的，一条都认不出就是列表页改版了
     if ($script:offListN -eq 0) { $warn = '公告列表抓到 0 条，网页格式可能已变' }
-  } catch { Write-Host "    $src 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
-  [void]$sources.Add([pscustomobject]@{ name = $src; ok = $ok; count = $n; warn = $warn })
+  } catch { $err = Err-Text $_.Exception; Write-Host "    $src 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  [void]$sources.Add([pscustomobject]@{ name = $src; ok = $ok; count = $n; warn = $warn; err = $err })
 }
 
 # ============ 支付宝开放平台公告（只留近一年的维护 / 异常类） ============
 $aliNotices = New-Object System.Collections.ArrayList
-$n = 0; $ok = $false; $warn = ''
+$n = 0; $ok = $false; $warn = ''; $err = ''
 try {
   $aj = (Get-Page $cfg.alipay.notice_url) | ConvertFrom-Json
   $ok = $true
@@ -307,8 +318,8 @@ try {
     [void]$aliNotices.Add([pscustomobject]@{ title = [string]$a.title; url = [string]$a.link; pub = $pubMs; src = '支付宝开放平台' })
     $n++
   }
-} catch { Write-Host "    支付宝公告 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
-[void]$sources.Add([pscustomobject]@{ name = '支付宝开放平台'; ok = $ok; count = $n; warn = $warn })
+} catch { $err = Err-Text $_.Exception; Write-Host "    支付宝公告 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+[void]$sources.Add([pscustomobject]@{ name = '支付宝开放平台'; ok = $ok; count = $n; warn = $warn; err = $err })
 
 # ============ 央行支付系统维护窗口（每年公布一次，写在 banks.json） ============
 $pboc = New-Object System.Collections.ArrayList

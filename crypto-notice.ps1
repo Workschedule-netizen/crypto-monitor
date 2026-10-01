@@ -45,6 +45,11 @@ $SoftExcludeKw = '合约|合約|风险限额|風險限額|上线|上線|上市|�
 $WalletKw = '充值|儲值|充提|提现|提現|提币|提幣|停充|停提|钱包|錢包|deposit|withdraw|wallet'
 $StopKw   = '暂停|暫停|维护|維護|停机|停機|停充|停提|停止|终止|終止|升级|升級|硬分叉|suspend|suspension|maintenance|halt|upgrade|hard fork'
 
+# ============ Telegram 推送范围 ============
+# 交易所公告：只有涉及这些链的才推 Telegram，其余只显示在网页上。要加别的链就写成 @('TRON', 'BSC')
+# 链名要跟下面 $ChainMap 的名字一样：TRON / BSC / ETH / TON / SOL
+$PushChains = @('TRON')
+
 # ============ 链节点（网页的实时状态和 Telegram 的链异常检测共用这一份） ============
 # nodes 按顺序试：只要有一个节点回报出块正常，这条链就算正常，所以每条链都放了备用节点
 # web=$false 的节点只给脚本用（该节点不允许浏览器直连）
@@ -251,7 +256,9 @@ function Test-ChainDef($def) {
 # 每家交易所的抓取情况：okN = 成功拿到数据的请求数，failN = 失败的请求数（只算第一页，新公告都在第一页）
 $cxNames = @{ Binance = '币安'; OKX = '欧易'; Coinbase = 'Coinbase' }
 $cxSrc = [ordered]@{}
-foreach ($k in 'Binance', 'OKX', 'Coinbase') { $cxSrc[$k] = [pscustomobject]@{ name = $k; okN = 0; failN = 0 } }
+foreach ($k in 'Binance', 'OKX', 'Coinbase') { $cxSrc[$k] = [pscustomobject]@{ name = $k; okN = 0; failN = 0; err = '' } }
+# 把失败原因记下来（最多 160 个字），网页页脚和 Telegram 提醒里都会带上，不用翻运行日志就知道为什么抓不到
+function Short-Err($m) { $s = ("$m" -replace '\s+', ' ').Trim(); if ($s.Length -gt 160) { $s = $s.Substring(0, 160) + '…' }; return $s }
 
 # 币安公告的发布时间缓存（bn-dates.txt，一行一条：公告编号|毫秒时间戳|d 或 f）
 #   d = 从详情接口查到的真正发布时间，以后不用再查
@@ -320,7 +327,7 @@ foreach ($cid in 48,49,157,161,128,93) {
         }
       }
     } catch {
-      if ($pno -eq 1) { $cxSrc['Binance'].failN++ }
+      if ($pno -eq 1) { $cxSrc['Binance'].failN++; $cxSrc['Binance'].err = Short-Err $_.Exception.Message }
       Write-Host "    币安分类 $cid 第 $pno 页抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow
     }
   }
@@ -336,29 +343,40 @@ try {
 
 # ============ 欧易 OKX（充提暂停/恢复专属分类） ============
 $okxHeaders = @{ 'Accept'='application/json'; 'Accept-Language'='zh-CN'; 'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+# 欧易的公告接口有两个官方域名，内容一样：第一个抓不到就换第二个
+# （脚本跑在 GitHub 的服务器上，那边连得上哪个域名，跟你自己的电脑打不打得开欧易无关）
+$okxHosts = @('www.okx.com', 'eea.okx.com'); $okxHost = $null   # $okxHost = 这次运行已经确认抓得到的域名
 foreach ($pg in 1..5) {
   Start-Sleep -Milliseconds 400
-  try {
-    $r = Get-Json "https://www.okx.com/api/v5/support/announcements?annType=announcements-deposit-withdrawal-suspension-resumption&page=$pg" $okxHeaders
-    if ($r.data.Count -gt 0) {
-      $cxSrc['OKX'].okN++
-      foreach ($d in $r.data[0].details) {
-        if (-not (Should-Keep $d.title 'OKX')) { continue }
-        $t = try { To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$d.pTime)) } catch { $nowBJ }
-        [void]$items.Add([pscustomobject]@{
-          Exchange = 'OKX'
-          Time     = $t
-          Title    = [string]$d.title
-          Url      = [string]$d.url
-          Chains   = (Get-Chains $d.title)
-          Level    = (Get-Level $d.title $t)
-        })
-      }
-    }
-  } catch {
-    if ($pg -eq 1) { $cxSrc['OKX'].failN++ }
-    Write-Host "    欧易第 $pg 页抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow
+  $r = $null; $why = @()
+  foreach ($hst in $(if ($okxHost) { @($okxHost) } else { $okxHosts })) {
+    try {
+      $x = Get-Json "https://$hst/api/v5/support/announcements?annType=announcements-deposit-withdrawal-suspension-resumption&page=$pg" $okxHeaders
+      if ($x.data.Count -gt 0) { $r = $x; $okxHost = $hst; break }
+      # 接口有回应、但没给数据（例如被限流或地区限制时回传的错误码）
+      $why += "$hst 没有回传数据 code=$($x.code) $($x.msg)"
+    } catch { $why += "$hst $($_.Exception.Message)" }
   }
+  if (-not $r) {
+    if ($pg -eq 1) { $cxSrc['OKX'].failN++; $cxSrc['OKX'].err = Short-Err ($why -join '；') }
+    Write-Host "    欧易第 $pg 页抓取失败: $($why -join '；')" -ForegroundColor DarkYellow
+    continue
+  }
+  $cxSrc['OKX'].okN++
+  try {
+    foreach ($d in $r.data[0].details) {
+      if (-not (Should-Keep $d.title 'OKX')) { continue }
+      $t = try { To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$d.pTime)) } catch { $nowBJ }
+      [void]$items.Add([pscustomobject]@{
+        Exchange = 'OKX'
+        Time     = $t
+        Title    = [string]$d.title
+        Url      = [string]$d.url
+        Chains   = (Get-Chains $d.title)
+        Level    = (Get-Level $d.title $t)
+      })
+    }
+  } catch { Write-Host "    欧易第 $pg 页内容处理失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 }
 
 # ============ Coinbase（状态页：充提事件 + 计划维护） ============
@@ -377,7 +395,7 @@ try {
       })
     }
   }
-} catch { $cxSrc['Coinbase'].failN++; Write-Host "    Coinbase 事件抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+} catch { $cxSrc['Coinbase'].failN++; $cxSrc['Coinbase'].err = Short-Err $_.Exception.Message; Write-Host "    Coinbase 事件抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 # 计划维护
 try {
   $mnt = Get-Json "https://status.coinbase.com/api/v2/scheduled-maintenances.json" $cbHeaders
@@ -392,7 +410,7 @@ try {
       })
     }
   }
-} catch { $cxSrc['Coinbase'].failN++; Write-Host "    Coinbase 维护抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+} catch { $cxSrc['Coinbase'].failN++; $cxSrc['Coinbase'].err = Short-Err $_.Exception.Message; Write-Host "    Coinbase 维护抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
 # ============ OKX 场外 USDT/CNY 快照（买入价 / 卖出价） ============
 $okxBuy='—'; $okxSell='—'
@@ -425,12 +443,16 @@ $cxPart = @($cxSrc.Values | Where-Object { ($_.okN -gt 0) -and ($_.failN -gt 0) 
 $cxWarn = ''
 if ($cxDown.Count -or $cxPart.Count) {
   $parts = @()
-  if ($cxDown.Count) { $parts += "$($cxDown -join '、') 连不上" }
-  if ($cxPart.Count) { $parts += "$($cxPart -join '、') 部分抓取失败" }
-  $cxWarn = "公告来源异常：$($parts -join '；')"
+  # 措辞要讲清楚是「公告抓不到」，不是交易所本身出问题（交易所网站打得开，不代表脚本所在的服务器抓得到它的公告接口）
+  if ($cxDown.Count) { $parts += "抓不到 $($cxDown -join '、') 的公告" }
+  if ($cxPart.Count) { $parts += "$($cxPart -join '、') 的公告只抓到一部分" }
+  $cxWarn = "公告抓取异常：$($parts -join '；')"
   Write-Host "  $cxWarn" -ForegroundColor DarkYellow
 }
-$cxSrcLine = @($cxSrc.Values | ForEach-Object { $_.name + $(if ($_.okN -eq 0) { ' ✗ 连接失败' } elseif ($_.failN -gt 0) { ' ⚠ 部分失败' } else { ' ✓' }) }) -join ' · '
+$cxSrcLine = @($cxSrc.Values | ForEach-Object {
+  $why = if ($_.err) { "（$(Esc $_.err)）" } else { '' }
+  $_.name + $(if ($_.okN -eq 0) { " ✗ 抓取失败$why" } elseif ($_.failN -gt 0) { " ⚠ 部分失败$why" } else { ' ✓' })
+}) -join ' · '
 if ($cxSkipped.Count) {
   Write-Host "  被排除词过滤掉的公告 $($cxSkipped.Count) 条：" -ForegroundColor DarkGray
   foreach ($k in $cxSkipped) { Write-Host "    - $k" -ForegroundColor DarkGray }
@@ -472,7 +494,7 @@ $rows = $rowsSb.ToString()
 $updated = $nowBJ.ToString('yyyy-MM-dd HH:mm:ss')
 $bannerClass = if ($todayAlerts -gt 0) { 'has-alert' } elseif ($cxWarn) { 'has-warn' } else { 'no-alert' }
 $bannerText  = if ($todayAlerts -gt 0) { "今日发现 $todayAlerts 条维护 / 暂停公告，请留意相关链的充提" + $(if ($cxWarn) { "（另外$cxWarn，列表可能不完整）" } else { '' }) }
-               elseif ($cxWarn) { "$cxWarn —— 下面的列表可能不完整，没有公告不代表正常" }
+               elseif ($cxWarn) { "$cxWarn（是抓取程序连不上公告接口，不代表交易所本身有问题）—— 下面的列表不完整，没有公告不代表正常" }
                else { "今日暂无新的维护 / 暂停公告" }
 
 # 被排除词过滤掉的公告：放在页脚，点开可以核对有没有误杀
@@ -1107,7 +1129,7 @@ __ROWS__
   window.handleAlerts=function(newlyBad,badNow){
     origHandle(newlyBad,badNow);
     if(badNow.length) setBadge('crypto','bad',badNow.length+' 链异常');
-    else if(CXBAD) setBadge('crypto','warn','公告来源异常');
+    else if(CXBAD) setBadge('crypto','warn','公告抓取异常');
     else setBadge('crypto','ok','正常');
   };
 
@@ -1145,7 +1167,7 @@ __ROWS__
     return '<a class="card lvl-'+lv+'" href="'+esc(e.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex '+chip+'">'+e.bank+'</span><span class="badge b-'+lv+'">'+tx+'</span><span class="src">'+esc(e.src)+'</span><span class="time">'+win(e)+'</span></div><div class="title">'+esc(e.title)+'</div><div class="scope">影响范围：'+esc(e.scope)+'</div></a>';
   }
   function srcLine(names){
-    return '来源：'+DATA.sources.filter(function(s){return names.indexOf(s.name)>=0;}).map(function(s){return s.name+(!s.ok?' ✗ 连接失败':(s.warn?' ⚠ '+s.warn:' ✓'));}).join(' · ');
+    return '来源：'+DATA.sources.filter(function(s){return names.indexOf(s.name)>=0;}).map(function(s){return s.name+(!s.ok?' ✗ 抓取失败'+(s.err?'（'+s.err+'）':''):(s.warn?' ⚠ '+s.warn:' ✓'));}).join(' · ');
   }
   // 有问题的公告来源：连不上，或连得上但内容读不出来（warn，多半是网页改版）；抓取程序整个没跑成功时也算
   function srcBad(names){
@@ -1368,15 +1390,17 @@ $html | Out-File -FilePath $OutFile -Encoding utf8
 
 Write-Host "  网页已生成：$OutFile" -ForegroundColor Green
 
-# ============ Telegram 推送（配置了 Secrets 时；只推近3天内、未推过的 维护/暂停/升级）============
+# ============ Telegram 推送（配置了 Secrets 时；交易所公告只推近3天内、未推过、涉及 $PushChains 的 维护/暂停/升级）============
 $tgToken = $env:TG_TOKEN; $tgChat = $env:TG_CHAT
 if ($tgToken -and $tgChat) {
   $pushedFile = Join-Path $ScriptDir 'pushed.txt'
   $pushed = @(); if (Test-Path $pushedFile) { $pushed = @(Get-Content $pushedFile -Encoding UTF8) }
   $recent = $nowBJ.AddDays(-3)
   $toNotify = @($items | Where-Object { ($_.Level -eq 'alert' -or $_.Level -eq 'upgrade') -and $_.Time -ge $recent })
+  # 交易所公告只推标题涉及 $PushChains 这些链的（目前只有 TRON / TRC20）；其他链和交易所整体维护只显示在网页上
+  $toPush = @($toNotify | Where-Object { $c = @($_.Chains); @($PushChains | Where-Object { $c -contains $_ }).Count -gt 0 })
   $newCount = 0
-  foreach ($n in $toNotify) {
+  foreach ($n in $toPush) {
     if ($pushed -contains $n.Url) { continue }
     $emoji = if ($n.Level -eq 'alert') { "🔴" } else { "🔵" }
     $chains = if ($n.Chains) { ($n.Chains -join '/') } else { '多链' }
@@ -1384,43 +1408,47 @@ if ($tgToken -and $tgChat) {
     if (Send-TGOk $tgToken $tgChat $msg) { $pushed += $n.Url; $newCount++; Start-Sleep -Milliseconds 400 }
   }
 
-  # ---- 银行 / 支付宝 维护推送：新公告、快开始了、结束了（自动去重）----
+  # ---- 银行 / 支付宝 维护推送（自动去重）----
+  # 每个维护时间段最多推这几次：
+  #   一周前（离开始 7 天内）→ 前一日（24 小时内）→ 前一小时（60 分钟内，或发现时已经开始）→ 结束
+  # 离开始还超过 7 天的先不推，只记录在网页上；等进入 7 天内才推第一次
+  # 公告出来得晚、已经错过前面的时间点时，从当下所在的那一段开始推，不补发前面的
   $bankPush = 0
   $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-  $RemindMs = 60 * 60000   # 维护开始前多久提醒（60 分钟）
+  $WeekMs   = 7 * 86400000   # 一周前
+  $DayMs    = 86400000       # 前一日
+  $RemindMs = 60 * 60000     # 前一小时
   $site = 'https://workschedule-netizen.github.io/crypto-monitor/'
   if ($bankData) {
     $bankEvents = @()
-    # 银行官网公告（sev=partial）不走这套「新公告 / 快开始 / 结束」提醒，下面另外每篇只推一次
-    foreach ($ev in @($bankData.events))        { if ($ev -and ($ev.sev -ne 'partial')) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'bank'; isNew = $true } } }
-    foreach ($ev in @($bankData.alipay.events)) { if ($ev) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'alipay'; isNew = $true } } }
-    # 央行窗口是全年固定安排，不当作「新公告」推，只在快开始和结束时提醒
-    foreach ($w in @($bankData.pboc.windows))   { if ($w)  { $bankEvents += [pscustomobject]@{ bank = '央行支付系统'; s = [int64]$w.s; e = [int64]$w.e; scope = '全部银行跨行转账'; url = $bankData.pboc.url; tab = 'bank'; isNew = $false } } }
+    # soft = 银行官网自己的公告（sev=partial）：只是部分服务可能受影响、通道未必不可用，所以措辞不同，也不推「结束」
+    foreach ($ev in @($bankData.events))        { if ($ev) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'bank'; soft = ($ev.sev -eq 'partial'); title = [string]$ev.title } } }
+    foreach ($ev in @($bankData.alipay.events)) { if ($ev) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'alipay'; soft = $false; title = '' } } }
+    # 央行窗口是全年固定安排，一样照「一周前 / 前一日 / 前一小时」提醒
+    foreach ($w in @($bankData.pboc.windows))   { if ($w)  { $bankEvents += [pscustomobject]@{ bank = '央行支付系统'; s = [int64]$w.s; e = [int64]$w.e; scope = '全部银行跨行转账'; url = $bankData.pboc.url; tab = 'bank'; soft = $false; title = '' } } }
     foreach ($ev in $bankEvents) {
       $id = "$($ev.bank)|$($ev.s)|$($ev.e)"
-      $kNew = "bank|$id"; $kStart = "bank-start|$id"; $kEnd = "bank-end|$id"
+      $kWeek = "bank-w7|$id"; $kDay = "bank-d1|$id"; $kStart = "bank-start|$id"; $kEnd = "bank-end|$id"
       $when = "$(Fmt-BJ $ev.s) – $(Fmt-BJ $ev.e)（北京时间）"
-      if (($nowMs -ge ($ev.s - $RemindMs)) -and ($nowMs -lt $ev.e)) {
-        if ($pushed -notcontains $kStart) {
-          $head = if ($nowMs -lt $ev.s) { "🔴 即将维护 · $($ev.bank)`n$([int][Math]::Ceiling(($ev.s - $nowMs) / 60000)) 分钟后开始" } else { "🔴 维护中 · $($ev.bank)`n已经开始，期间不可使用" }
-          if (Send-TGOk $tgToken $tgChat "$head`n时间：$when`n影响：$($ev.scope)`n$site#$($ev.tab)") { $pushed += $kStart; if ($pushed -notcontains $kNew) { $pushed += $kNew }; $bankPush++; Start-Sleep -Milliseconds 400 }
+      $left = $ev.s - $nowMs
+      if ($nowMs -ge $ev.e) {
+        # 已经结束：推过「前一小时 / 维护中」的才补一条结束通知
+        if ((-not $ev.soft) -and ($pushed -contains $kStart) -and ($pushed -notcontains $kEnd)) {
+          if (Send-TGOk $tgToken $tgChat "🟢 维护结束 · $($ev.bank)`n公告的维护时间已过（$(Fmt-BJ $ev.e) 结束），可以重新启用`n$site#$($ev.tab)") { $pushed += $kEnd; $bankPush++; Start-Sleep -Milliseconds 400 }
         }
-      } elseif (($nowMs -lt $ev.s) -and $ev.isNew) {
-        if ($pushed -notcontains $kNew) {
-          if (Send-TGOk $tgToken $tgChat "🏦 维护公告 · $($ev.bank)`n时间：$when`n影响：$($ev.scope)，期间不可使用`n$($ev.url)") { $pushed += $kNew; $bankPush++; Start-Sleep -Milliseconds 400 }
-        }
-      } elseif (($nowMs -ge $ev.e) -and ($pushed -contains $kStart) -and ($pushed -notcontains $kEnd)) {
-        if (Send-TGOk $tgToken $tgChat "🟢 维护结束 · $($ev.bank)`n公告的维护时间已过（$(Fmt-BJ $ev.e) 结束），可以重新启用`n$site#$($ev.tab)") { $pushed += $kEnd; $bankPush++; Start-Sleep -Milliseconds 400 }
+        continue
       }
-    }
-    # 银行官网公告：讲的是部分服务可能受影响，通道未必不可用。每篇公告只提醒一次，已经结束的不推
-    $official = @($bankData.events | Where-Object { $_ -and ($_.sev -eq 'partial') -and ([int64]$_.e -gt $nowMs) })
-    foreach ($grp in @($official | Group-Object url)) {
-      $key = "bank-official|$($grp.Name)"
+      # 现在落在哪一段：key 是这一段的去重记号，stage / line 是消息里的说法
+      if ($left -le 0)             { $key = $kStart; $icon = '🔴'; $stage = '维护中';   $line = '已经开始' }
+      elseif ($left -le $RemindMs) { $key = $kStart; $icon = '🔴'; $stage = '即将维护'; $line = "$([int][Math]::Ceiling($left / 60000)) 分钟后开始" }
+      elseif ($left -le $DayMs)    { $key = $kDay;   $icon = '⏰'; $stage = '前一日提醒'; $line = "约 $([int][Math]::Ceiling($left / 3600000)) 小时后开始" }
+      elseif ($left -le $WeekMs)   { $key = $kWeek;  $icon = '🏦'; $stage = '维护预告'; $line = "还有 $([int][Math]::Ceiling($left / 86400000)) 天" }
+      else { continue }
       if ($pushed -contains $key) { continue }
-      $first = $grp.Group[0]
-      $times = @($grp.Group | Sort-Object { [int64]$_.s } | ForEach-Object { "$(Fmt-BJ $_.s) – $(Fmt-BJ $_.e)" }) -join '；'
-      $msg = "🟡 银行官方公告 · $($first.bank)`n$($first.title)`n时间：$times（北京时间）`n$($first.scope)`n这是银行自己的公告，通道未必不可用`n$($grp.Name)"
+      # 快开始了附网页连结，方便直接看状态；提前的预告附公告原文
+      $link = if ($key -eq $kStart) { "$site#$($ev.tab)" } else { [string]$ev.url }
+      $msg = if ($ev.soft) { "🟡 银行官方公告 · $($ev.bank)（$stage）`n$($ev.title)`n$line`n时间：$when`n$($ev.scope)`n这是银行自己的公告，通道未必不可用`n$link" }
+             else { "$icon $stage · $($ev.bank)`n$line`n时间：$when`n影响：$($ev.scope)，期间不可使用`n$link" }
       if (Send-TGOk $tgToken $tgChat $msg) { $pushed += $key; $bankPush++; Start-Sleep -Milliseconds 400 }
     }
     # 支付宝开放平台的维护 / 异常类公告（3 天内、未推过的）
@@ -1469,19 +1497,20 @@ if ($tgToken -and $tgChat) {
   @($newState.GetEnumerator() | ForEach-Object { "$($_.Key)|$($_.Value)" }) | Out-File -FilePath $chainLogFile -Encoding UTF8
   Write-Host "  链检测：出块异常 $($chainStall.Count) 条，节点连不上 $($chainDown.Count) 条" -ForegroundColor Cyan
 
-  # ---- 公告来源连续失败提醒（含恢复通知）----
-  # 来源连不上、或连得上但内容读不出来（多半是网页改版）时，「无维护」不可信，所以连续几次都这样就提醒一次
-  # srcfail.txt 一行一条：来源名|连续失败次数|是否已通知(1/0)
-  $SrcFailN = 3   # 连续失败几次才提醒（每 5 分钟跑一次，3 次约 15 分钟）
+  # ---- 公告来源失败提醒（含恢复通知）----
+  # 来源连不上、或连得上但内容读不出来（多半是网页改版）时，「无维护」不可信，所以连着几次都这样就提醒一次
+  # srcfail.txt 一行一条：来源名|分数|是否已通知(1/0)
+  #   分数：失败一次 +1（最高 $SrcFailN），成功一次 -1。加到 $SrcFailN 才提醒，退回 0 才算恢复
+  #   这样时好时坏的来源（例如从海外连银行官网偶尔超时）不会一下「异常」一下「恢复」地来回通知
+  $SrcFailN = 3   # 每 5 分钟跑一次，连着失败 3 次约 15 分钟
+  # 只管银行 / 支付宝的来源。交易所公告抓不到不推 Telegram，只在网页上显示黄色提示和原因
   $srcNow = [ordered]@{}   # 这次有问题的来源 → 原因
-  foreach ($s in $cxSrc.Values) {
-    if ($s.okN -eq 0) { $srcNow["$($cxNames[$s.name])公告"] = '连不上' }
-    elseif ($s.failN -gt 0) { $srcNow["$($cxNames[$s.name])公告"] = '部分请求失败' }
-  }
+  $cxSrcNames = @($cxNames.Values | ForEach-Object { "${_}公告" })   # 旧版记录里的交易所来源名，读记录时跳过
   if ($bankData) {
     foreach ($s in @($bankData.sources)) {
       if (-not $s) { continue }
-      if (-not $s.ok) { $srcNow[[string]$s.name] = '连不上' } elseif ($s.warn) { $srcNow[[string]$s.name] = [string]$s.warn }
+      if (-not $s.ok) { $srcNow[[string]$s.name] = '抓取失败' + $(if ($s.err) { "（$($s.err)）" } else { '' }) }
+      elseif ($s.warn) { $srcNow[[string]$s.name] = [string]$s.warn }
     }
   } else { $srcNow['银行 / 支付宝抓取程序'] = '没有跑成功' }
   $srcFile = Join-Path $ScriptDir 'srcfail.txt'
@@ -1489,23 +1518,27 @@ if ($tgToken -and $tgChat) {
   if (Test-Path $srcFile) {
     foreach ($ln in @(Get-Content $srcFile -Encoding UTF8 | Where-Object { $_ })) {
       $p = "$ln".Trim().Split('|')
-      if ($p.Count -ge 3) { try { $srcPrev[$p[0]] = [pscustomobject]@{ n = [int]$p[1]; sent = ($p[2] -eq '1') } } catch {} }
+      if (($p.Count -ge 3) -and ($cxSrcNames -notcontains $p[0])) { try { $srcPrev[$p[0]] = [pscustomobject]@{ n = [int]$p[1]; sent = ($p[2] -eq '1') } } catch {} }
     }
   }
   $srcNext = [ordered]@{}
-  foreach ($name in @($srcNow.Keys)) {
-    $o = $srcPrev[$name]; $cnt = 1; $sent = $false
-    # 已经通知过的不再往上数（否则这个文件每次运行都会变）
-    if ($o) { $sent = $o.sent; $cnt = if ($o.sent) { $o.n } else { $o.n + 1 } }
-    if (($cnt -ge $SrcFailN) -and (-not $sent)) {
-      $sent = [bool](Send-TGOk $tgToken $tgChat "⚠ 公告来源异常 · $name`n$($srcNow[$name])（已连续 $cnt 次）`n修好之前收不到这个来源的维护公告，它显示「无维护」不可信。")
+  foreach ($name in @(@($srcNow.Keys) + @($srcPrev.Keys) | Select-Object -Unique)) {
+    $o = $srcPrev[$name]; $n = 0; $sent = $false
+    if ($o) { $n = $o.n; $sent = $o.sent }
+    if ($srcNow.Contains($name)) {
+      $n = [Math]::Min($n + 1, $SrcFailN)
+      if (($n -ge $SrcFailN) -and (-not $sent)) {
+        $sent = [bool](Send-TGOk $tgToken $tgChat "⚠ 公告抓不到 · $name`n$($srcNow[$name])`n已经连着 $SrcFailN 次抓不到。这是抓取程序连不上这个来源，不代表对方本身有问题；但修好之前收不到它的维护公告，它显示「无维护」不可信。")
+      }
+    } else {
+      $n = $n - 1
+      if ($n -le 0) {
+        $n = 0
+        # 恢复通知发成功才把记录清掉；发不出去就留着，下次再发
+        if ($sent -and (Send-TGOk $tgToken $tgChat "🟢 公告来源恢复 · $name`n已经可以正常抓取。")) { $sent = $false }
+      }
     }
-    $srcNext[$name] = "$cnt|$(if ($sent) { 1 } else { 0 })"
-  }
-  foreach ($name in @($srcPrev.Keys)) {
-    if ($srcNow.Contains($name) -or (-not $srcPrev[$name].sent)) { continue }
-    # 恢复通知发不出去：先留着记录，下次再发
-    if (-not (Send-TGOk $tgToken $tgChat "🟢 公告来源恢复 · $name`n已经可以正常抓取。")) { $srcNext[$name] = '0|1' }
+    if (($n -gt 0) -or $sent) { $srcNext[$name] = "$n|$(if ($sent) { 1 } else { 0 })" }
   }
   @($srcNext.GetEnumerator() | ForEach-Object { "$($_.Key)|$($_.Value)" }) | Out-File -FilePath $srcFile -Encoding UTF8
   if ($srcNow.Count) { Write-Host "  公告来源：$($srcNow.Count) 个异常（$(@($srcNow.Keys) -join '、')）" -ForegroundColor DarkYellow }
@@ -1555,7 +1588,7 @@ if ($tgToken -and $tgChat) {
 
 # 手动触发（workflow_dispatch）时发一条测试消息，确认推送通道
 if ($tgToken -and $tgChat -and $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-  $tmsg = "✅ 监控台 · 推送测试成功`n通道正常，当前共 $totalCount 条相关公告。`n真出现维护/暂停/升级时会自动通知你。"
+  $tmsg = "✅ 监控台 · 推送测试成功`n通道正常，当前共 $totalCount 条相关公告。`n$($PushChains -join ' / ') 相关的交易所公告、银行维护（一周前 / 前一日 / 前一小时）和链异常会自动通知你。"
   if (Send-TGOk $tgToken $tgChat $tmsg) { Write-Host "  已发送手动测试消息" -ForegroundColor Cyan }
 }
 
