@@ -559,6 +559,8 @@ $tpl = @'
   .tl-bar.soon{background:var(--warn)}
   .tl-bar.later{background:rgba(61,155,255,.75)}
   .tl-bar.done{background:var(--faint);opacity:.6}
+  .tl-bar.partial{background:repeating-linear-gradient(45deg,rgba(240,160,32,.9) 0 5px,rgba(240,160,32,.45) 5px 10px);box-shadow:none;opacity:1}
+  .tl-bar.partial.done{opacity:.4}
   .tl-now{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--txt);z-index:2;pointer-events:none}
   .tl-now::before{content:"现在";position:absolute;top:-19px;left:-2px;transform:translateX(-50%);font-family:var(--mono);font-size:10px;font-weight:700;color:var(--ink);background:var(--txt);padding:0 5px;border-radius:3px;white-space:nowrap}
   .tl-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--sub);padding:9px 0 6px;border-top:1px solid var(--line)}
@@ -683,6 +685,7 @@ __ROWS__
       <span><i style="background:var(--warn)"></i>24 小时内</span>
       <span><i style="background:rgba(61,155,255,.75)"></i>之后</span>
       <span><i style="background:var(--faint)"></i>已结束</span>
+      <span><i style="background:repeating-linear-gradient(45deg,rgba(240,160,32,.9) 0 3px,rgba(240,160,32,.45) 3px 6px)"></i>银行官方公告 · 部分服务可能受影响</span>
     </div>
   </div>
 </div>
@@ -707,7 +710,8 @@ __ROWS__
 <footer>
   <span id="banksrc"></span><br>
   通道状态由公告里的维护时间段推算：进入时间段显示「维护中」，24 小时内显示「即将维护」<br>
-  公告来自第三方支付机构转发的银行通知，可能不完整；没有公告不代表银行一定正常
+  黄色的「官方公告」是银行自己官网的公告（目前接了中国银行、招商、中信、建设四家），讲的是部分服务可能受影响，通道未必不可用<br>
+  其余银行只有第三方支付机构转发的通知，可能不完整；没有公告不代表银行一定正常
 </footer>
 </div><!-- /view-bank -->
 <div class="view" id="view-alipay" hidden>
@@ -964,8 +968,12 @@ __ROWS__
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function byStart(a,b){return a.s-b.s;}
   var ST_TXT={now:'维护中',soon:'即将维护',later:'已排程',done:'已结束'},ST_LV={now:'alert',soon:'soon',later:'upgrade',done:'resume'};
+  // 银行官网公告（sev=partial）：只是部分服务可能受影响，不等于通道不可用，所以一律用黄色、不标红
+  var PT_TXT={now:'官方公告 · 进行中',soon:'官方公告 · 即将开始',later:'官方公告 · 已排程',done:'官方公告 · 已结束'},PT_LV={now:'soon',soon:'soon',later:'upgrade',done:'resume'};
+  function isPart(e){return e.sev==='partial';}
   function eventCard(e,chip){
-    return '<a class="card lvl-'+ST_LV[e.st]+'" href="'+esc(e.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex '+chip+'">'+e.bank+'</span><span class="badge b-'+ST_LV[e.st]+'">'+ST_TXT[e.st]+'</span><span class="src">'+esc(e.src)+'</span><span class="time">'+win(e)+'</span></div><div class="title">'+esc(e.title)+'</div><div class="scope">影响范围：'+esc(e.scope)+'</div></a>';
+    var lv=(isPart(e)?PT_LV:ST_LV)[e.st],tx=(isPart(e)?PT_TXT:ST_TXT)[e.st];
+    return '<a class="card lvl-'+lv+'" href="'+esc(e.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex '+chip+'">'+e.bank+'</span><span class="badge b-'+lv+'">'+tx+'</span><span class="src">'+esc(e.src)+'</span><span class="time">'+win(e)+'</span></div><div class="title">'+esc(e.title)+'</div><div class="scope">影响范围：'+esc(e.scope)+'</div></a>';
   }
   function srcLine(names){
     return '来源：'+DATA.sources.filter(function(s){return names.indexOf(s.name)>=0;}).map(function(s){return s.name+(s.ok?' ✓':' ✗ 连接失败');}).join(' · ');
@@ -980,11 +988,16 @@ __ROWS__
   // ====== 银行 ======
   function status(name){
     var ev=EVENTS.filter(function(e){return e.bank===name;});
-    var cur=ev.filter(function(e){return e.st==='now';})[0];
-    var nxt=ev.filter(function(e){return e.st==='soon';}).sort(byStart)[0];
-    var ltr=ev.filter(function(e){return e.st==='later';}).sort(byStart)[0];
+    var hard=ev.filter(function(e){return !isPart(e);}),soft=ev.filter(isPart);
+    function pick(list,s){return list.filter(function(e){return e.st===s;}).sort(byStart)[0];}
+    var cur=pick(hard,'now'),nxt=pick(hard,'soon');
     if(cur) return {cls:'bad',kind:'stop',txt:'维护中 · 不可使用',meta:'预计 '+dayLabel(cur.e)+' '+hm(cur.e)+' 结束 ｜ '+cur.scope};
     if(nxt) return {cls:'warn',kind:'soon',txt:'即将维护',meta:win(nxt)+' ｜ '+nxt.scope};
+    // 银行官网公告：部分服务可能受影响，只标黄，不算「维护中」
+    var pc=pick(soft,'now'),pn=pick(soft,'soon');
+    if(pc) return {cls:'warn',kind:'part',txt:'官方公告 · 部分服务维护中',meta:'预计 '+dayLabel(pc.e)+' '+hm(pc.e)+' 结束 ｜ '+pc.scope};
+    if(pn) return {cls:'warn',kind:'part',txt:'官方公告 · 即将维护',meta:win(pn)+' ｜ '+pn.scope};
+    var ltr=pick(ev,'later');
     if(ltr) return {cls:'ok',kind:'ok',txt:'正常',meta:'下次维护 '+win(ltr)};
     return {cls:'ok',kind:'ok',txt:'正常',meta:'无维护公告'};
   }
@@ -994,7 +1007,7 @@ __ROWS__
     EVENTS.forEach(function(e){e.st=st(e,now);});
     document.getElementById('banktotal').textContent=BANKS.length;
     // 需要注意的银行（大卡片）+ 全部银行（小格）
-    var cnt={stop:0,soon:0,ok:0},focus='',groups='';
+    var cnt={stop:0,soon:0,part:0,ok:0},focus='',groups='';
     var ps=status(PBOC);
     if(ps.kind!=='ok') focus+='<div class="fcard '+ps.cls+'"><div class="dot"></div><div class="cc-name">'+PBOC+'<span>影响全部银行</span></div><div class="cc-status">'+ps.txt+'</div><div class="cc-meta">'+esc(ps.meta)+'</div></div>';
     CFG.groups.forEach(function(g){
@@ -1015,6 +1028,7 @@ __ROWS__
     document.getElementById('bstat').innerHTML=
       '<span class="pill'+(cnt.stop?' bad':'')+'"><i></i>维护中 '+cnt.stop+'</span>'+
       '<span class="pill'+(cnt.soon?' warn':'')+'"><i></i>即将维护 '+cnt.soon+'</span>'+
+      (cnt.part?'<span class="pill warn"><i></i>官方公告 '+cnt.part+'</span>':'')+
       '<span class="pill ok"><i></i>正常 '+cnt.ok+'</span>';
     // 央行窗口提示
     var pn=EVENTS.filter(function(e){return e.g==='pboc'&&e.e>now;}).sort(byStart)[0];
@@ -1032,7 +1046,7 @@ __ROWS__
       var bars='';
       inRange.filter(function(e){return e.bank===nm;}).forEach(function(e){
         var l=Math.max(0,(e.s-A)/SPAN*100),r=Math.min(100,(e.e-A)/SPAN*100);
-        bars+='<div class="tl-bar '+e.st+'" style="left:'+l+'%;width:'+(r-l)+'%" title="'+esc(nm+' '+win(e)+' ｜ '+e.scope)+'"></div>';
+        bars+='<div class="tl-bar '+e.st+(isPart(e)?' partial':'')+'" style="left:'+l+'%;width:'+(r-l)+'%" title="'+esc(nm+' '+win(e)+' ｜ '+e.scope)+'"></div>';
       });
       rows+='<div class="tl-row"><div class="tl-name">'+nm+'</div><div class="tl-track">'+bars+'</div></div>';
     });
@@ -1046,6 +1060,7 @@ __ROWS__
     if(ps.kind==='stop'){bn.className='banner has-alert';bn.textContent='央行支付系统维护中，全部银行跨行转账暂停'+(cnt.stop?('；另有 '+cnt.stop+' 家银行维护中'):'');setBadge('bank','bad','央行维护中');}
     else if(cnt.stop){bn.className='banner has-alert';bn.textContent='当前 '+cnt.stop+' 家银行维护中、不可使用'+(soonN?('，24 小时内还有 '+soonN+' 项即将维护'):'')+'，请留意相关通道的出入款';setBadge('bank','bad',cnt.stop+' 家维护中');}
     else if(soonN){bn.className='banner has-warn';bn.textContent='24 小时内有 '+soonN+' 项即将维护，当前通道全部正常';setBadge('bank','warn',soonN+' 项即将维护');}
+    else if(cnt.part){bn.className='banner has-warn';bn.textContent=cnt.part+' 家银行有官方维护公告，部分服务可能受影响，通道未必不可用';setBadge('bank','warn',cnt.part+' 家官方公告');}
     else if(srcBad(['易宝支付','快钱']).length){bn.className='banner has-warn';bn.textContent='公告来源连不上（'+srcBad(['易宝支付','快钱']).join('、')+'），目前显示的状态可能不准';setBadge('bank','warn','来源异常');}
     else{bn.className='banner no-alert';bn.textContent='当前无维护，24 小时内也没有计划维护';setBadge('bank','ok','正常');}
     // 公告列表
@@ -1056,7 +1071,8 @@ __ROWS__
     }).sort(function(a,b){ return (order[a.st]-order[b.st])||(a.st==='done'?b.e-a.e:a.s-b.s); });
     document.getElementById('banklist').innerHTML=list.map(function(e){return eventCard(e,'ex-bank');}).join('')||'<div class="empty">没有符合条件的公告<span>换个筛选条件试试</span></div>';
     document.getElementById('bankupd').textContent=md(DATA.updated)+' '+hm(DATA.updated);
-    document.getElementById('banksrc').textContent=srcLine(['易宝支付','快钱'])+' · 人民银行清算总中心（年度安排）｜已过滤非维护类公告 '+skippedN(false)+' 条';
+    var bsrc=DATA.sources.map(function(s){return s.name;}).filter(function(n){return n!=='支付宝开放平台';});
+    document.getElementById('banksrc').textContent=srcLine(bsrc)+' · 人民银行清算总中心（年度安排）｜已过滤非维护类公告 '+skippedN(false)+' 条';
   }
   // 类别筛选按钮按 banks.json 的分组生成
   var of=document.getElementById('orgFilters');
@@ -1205,7 +1221,8 @@ if ($tgToken -and $tgChat) {
   $site = 'https://workschedule-netizen.github.io/crypto-monitor/'
   if ($bankData) {
     $bankEvents = @()
-    foreach ($ev in @($bankData.events))        { if ($ev) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'bank'; isNew = $true } } }
+    # 银行官网公告（sev=partial）不走这套「新公告 / 快开始 / 结束」提醒，下面另外每篇只推一次
+    foreach ($ev in @($bankData.events))        { if ($ev -and ($ev.sev -ne 'partial')) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'bank'; isNew = $true } } }
     foreach ($ev in @($bankData.alipay.events)) { if ($ev) { $bankEvents += [pscustomobject]@{ bank = $ev.bank; s = [int64]$ev.s; e = [int64]$ev.e; scope = $ev.scope; url = $ev.url; tab = 'alipay'; isNew = $true } } }
     # 央行窗口是全年固定安排，不当作「新公告」推，只在快开始和结束时提醒
     foreach ($w in @($bankData.pboc.windows))   { if ($w)  { $bankEvents += [pscustomobject]@{ bank = '央行支付系统'; s = [int64]$w.s; e = [int64]$w.e; scope = '全部银行跨行转账'; url = $bankData.pboc.url; tab = 'bank'; isNew = $false } } }
@@ -1225,6 +1242,16 @@ if ($tgToken -and $tgChat) {
       } elseif (($nowMs -ge $ev.e) -and ($pushed -contains $kStart) -and ($pushed -notcontains $kEnd)) {
         if (Send-TGOk $tgToken $tgChat "🟢 维护结束 · $($ev.bank)`n公告的维护时间已过（$(Fmt-BJ $ev.e) 结束），可以重新启用`n$site#$($ev.tab)") { $pushed += $kEnd; $bankPush++; Start-Sleep -Milliseconds 400 }
       }
+    }
+    # 银行官网公告：讲的是部分服务可能受影响，通道未必不可用。每篇公告只提醒一次，已经结束的不推
+    $official = @($bankData.events | Where-Object { $_ -and ($_.sev -eq 'partial') -and ([int64]$_.e -gt $nowMs) })
+    foreach ($grp in @($official | Group-Object url)) {
+      $key = "bank-official|$($grp.Name)"
+      if ($pushed -contains $key) { continue }
+      $first = $grp.Group[0]
+      $times = @($grp.Group | Sort-Object { [int64]$_.s } | ForEach-Object { "$(Fmt-BJ $_.s) – $(Fmt-BJ $_.e)" }) -join '；'
+      $msg = "🟡 银行官方公告 · $($first.bank)`n$($first.title)`n时间：$times（北京时间）`n$($first.scope)`n这是银行自己的公告，通道未必不可用`n$($grp.Name)"
+      if (Send-TGOk $tgToken $tgChat $msg) { $pushed += $key; $bankPush++; Start-Sleep -Milliseconds 400 }
     }
     # 支付宝开放平台的维护 / 异常类公告（3 天内、未推过的）
     foreach ($nt in @($bankData.alipay.notices)) {
@@ -1273,9 +1300,14 @@ if ($tgToken -and $tgChat) {
       $chainLine = if ($nowBad.Count -eq 0) { '五条链全部正常 ✅' } else { '⚠ 异常：' + ($nowBad -join '、') }
       $bankLine = '抓取失败 ⚠'; $aliLine = '抓取失败 ⚠'
       if ($bankData) {
-        $bNow  = @($bankData.events | Where-Object { $_ -and ([int64]$_.s -le $nowMs) -and ([int64]$_.e -ge $nowMs) } | ForEach-Object { $_.bank } | Select-Object -Unique)
-        $bSoon = @($bankData.events | Where-Object { $_ -and ([int64]$_.s -gt $nowMs) -and (([int64]$_.s - $nowMs) -le 86400000) } | ForEach-Object { $_.bank } | Select-Object -Unique)
+        # 银行官网公告（部分服务可能受影响）不算「维护中」，另外注明
+        $hardEv = @($bankData.events | Where-Object { $_ -and ($_.sev -ne 'partial') })
+        $softEv = @($bankData.events | Where-Object { $_ -and ($_.sev -eq 'partial') })
+        $bNow  = @($hardEv | Where-Object { ([int64]$_.s -le $nowMs) -and ([int64]$_.e -ge $nowMs) } | ForEach-Object { $_.bank } | Select-Object -Unique)
+        $bSoon = @($hardEv | Where-Object { ([int64]$_.s -gt $nowMs) -and (([int64]$_.s - $nowMs) -le 86400000) } | ForEach-Object { $_.bank } | Select-Object -Unique)
+        $pNow  = @($softEv | Where-Object { ([int64]$_.s -le $nowMs) -and ([int64]$_.e -ge $nowMs) } | ForEach-Object { $_.bank } | Select-Object -Unique)
         $bankLine = if ($bNow.Count) { '⚠ 维护中：' + ($bNow -join '、') } elseif ($bSoon.Count) { '24小时内维护：' + ($bSoon -join '、') } else { '无维护 ✅' }
+        if ($pNow.Count) { $bankLine += "（官方公告进行中：$($pNow -join '、')，部分服务可能受影响）" }
         $aNow = @($bankData.alipay.events | Where-Object { $_ -and ([int64]$_.s -le $nowMs) -and ([int64]$_.e -ge $nowMs) })
         $aNew = @($bankData.alipay.notices | Where-Object { $_ -and (($nowMs - [int64]$_.pub) -le 3 * 86400000) })
         $aliLine = if ($aNow.Count) { '⚠ 维护中' } elseif ($aNew.Count) { "近3天公告 $($aNew.Count) 条" } else { '无维护公告 ✅' }
