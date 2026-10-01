@@ -27,6 +27,10 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # 一律取 main 当下最新的内容，而不是「触发这次运行的那个提交」：
+          # 连续上传几次文件会排队跑好几轮，后面那轮要能读到前一轮刚存好的推送记录，否则同一条消息会重复发
+          ref: main
 
       - name: 运行抓取脚本生成 index.html
         shell: pwsh
@@ -36,6 +40,8 @@ jobs:
         run: ./crypto-notice.ps1
 
       - name: 保存推送记录
+        id: save
+        continue-on-error: true   # 保存失败也照样部署网页；最后一步再把这次运行标成失败
         shell: bash
         run: |
           git config user.name "github-actions"
@@ -44,8 +50,23 @@ jobs:
           for f in pushed.txt chainlog.txt lastreport.txt bn-dates.txt srcfail.txt; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
-          git commit -m "update pushed list [skip ci]" 2>/dev/null || true
-          git push 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "记录没有变化，不用保存"
+            exit 0
+          fi
+          git commit -m "update pushed list [skip ci]"
+          # 运行期间仓库可能多了新的提交（例如刚好又上传了文件），直接推会被拒绝：
+          # 先把新的提交接上来再推，不成功就再试，最多 3 次
+          for i in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push origin HEAD:main; then
+              echo "推送记录已保存"
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep 3
+          done
+          echo "::error::推送记录保存失败，下一轮可能会重复发送 Telegram 消息"
+          exit 1
 
       - name: 配置 Pages
         uses: actions/configure-pages@v5
@@ -58,3 +79,10 @@ jobs:
       - name: 部署到 GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: 推送记录没存成功时，把这次运行标成失败
+        if: steps.save.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error::推送记录保存失败（网页已照常部署）。请看上面「保存推送记录」那一步的输出"
+          exit 1
