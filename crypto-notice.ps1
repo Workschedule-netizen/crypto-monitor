@@ -1,5 +1,5 @@
 ﻿# -*- coding: utf-8 -*-
-# 监控台：虚拟币 / 银行 / 支付宝 三个分页
+# 监控台：虚拟币 / 网银·支付宝 / 银行 三个分页
 # 虚拟币：抓取 币安(Binance) + 欧易(OKX) + Coinbase 公告，过滤出充提维护相关
 # 银行 / 支付宝：由同目录的 bank-fetch.ps1 抓取（名单与关键词在 banks.json）
 # 生成网页并自动打开
@@ -106,13 +106,21 @@ function Get-Json($url, $headers) {
 }
 # 发送 Telegram 消息（UTF-8 JSON），成功返回 $true；失败的不会记为已推送，下次运行再试
 # 本机测试时设环境变量 TG_DRYRUN=1：只把消息印在屏幕上，不真的发送
+# TG_CHAT 可以填多个对象（私聊、群组），用逗号隔开，每个都会发
+# 只要有一个发成功就算成功：否则某个对象一直发不出去时，其他对象会每 5 分钟重复收到同一条
 function Send-TGOk($token, $chat, $text) {
-  if ($env:TG_DRYRUN) { Write-Host "  [演练] $($text -replace "`n", ' ｜ ')" -ForegroundColor Magenta; return $true }
-  $p = @{ chat_id = $chat; text = $text; disable_web_page_preview = $true } | ConvertTo-Json -Compress
-  try {
-    Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($p)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
-    return $true
-  } catch { Write-Host "  Telegram 推送失败: $($_.Exception.Message)" -ForegroundColor DarkYellow; return $false }
+  $targets = @("$chat" -split '[,，;；\s]+' | Where-Object { $_ })
+  if ($env:TG_DRYRUN) { Write-Host "  [演练 → $($targets.Count) 个对象] $($text -replace "`n", ' ｜ ')" -ForegroundColor Magenta; return $true }
+  $ok = $false; $i = 0
+  foreach ($c in $targets) {
+    $i++
+    $p = @{ chat_id = $c; text = $text; disable_web_page_preview = $true } | ConvertTo-Json -Compress
+    try {
+      Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($p)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 20 | Out-Null
+      $ok = $true
+    } catch { Write-Host "  Telegram 推送失败（第 $i 个对象）: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  }
+  return $ok
 }
 function Send-TG($token, $chat, $text) { [void](Send-TGOk $token $chat $text) }
 # 毫秒时间戳 → 北京时间 MM-dd HH:mm
@@ -468,6 +476,18 @@ $tpl = @'
   .btile.off{color:var(--faint);border-style:dashed}
   .btile.off i{background:var(--faint)}
   .btile.hide{display:none}
+  .btile.idle i{background:var(--faint)}
+  /* 通道侦测项目：一家供应商一行 */
+  .chbox{border:1px solid var(--line);border-radius:10px;padding:2px 12px}
+  .chrow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+  .chrow:first-child{border-top:none}
+  .chprov{width:96px;flex:none;font-size:13px;font-weight:700;padding-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chprov span{font-family:var(--mono);font-weight:400;color:var(--faint);font-size:11px;margin-left:6px}
+  .chitems{flex:1;min-width:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px}
+  .chrow.wide .chitems{grid-template-columns:repeat(auto-fill,minmax(236px,1fr))}
+  .chitems .btile{white-space:normal;line-height:1.35}
+  .btile small.mid{display:inline-block;max-width:100%;font-family:var(--mono);font-size:11.5px;font-weight:400;color:var(--sub);overflow-wrap:anywhere}
+  @media(max-width:680px){.chbox{padding:2px 10px}.chprov{width:60px;font-size:12.5px}.chprov span{display:none}.chitems,.chrow.wide .chitems{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
   .src{font-size:10.5px;font-family:var(--mono);color:var(--sub);border:1px solid var(--line2);border-radius:4px;padding:1px 6px}
   .tl-empty{padding:16px 0;text-align:center;color:var(--sub);font-size:13px;border-top:1px solid var(--line)}
   @media(max-width:680px){#bsearch{margin-left:0;width:100%}.btiles{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}}
@@ -508,7 +528,7 @@ $tpl = @'
 <header>
   <div class="brand">
     <h1><svg width="26" height="26" viewBox="0 0 24 24" style="vertical-align:-5px;margin-right:9px"><rect x="4" y="8" width="16" height="11" rx="3.5" fill="#3b82f6"/><circle cx="9.5" cy="13" r="1.7" fill="#fff"/><circle cx="14.5" cy="13" r="1.7" fill="#fff"/><path d="M12 4v4" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="3.4" r="1.9" fill="#22c55e"/><rect x="9.5" y="16" width="5" height="1.6" rx="0.8" fill="#fff" opacity=".55"/></svg>监控台</h1>
-    <p>虚拟币 · 银行 · 支付宝 · 通道状态与维护公告</p>
+    <p>虚拟币 · 网银/支付宝 · 银行 · 通道状态与维护公告</p>
   </div>
   <div class="head-right">
     <span id="sysStatus">连接中…</span>
@@ -521,15 +541,15 @@ $tpl = @'
     <span class="tab-txt">虚拟币<small>链况 · 汇率 · 交易所公告</small></span>
     <span class="tab-badge" id="badge-crypto">检测中…</span>
   </button>
+  <button class="tab" data-view="alipay" role="tab" aria-selected="false">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>
+    <span class="tab-txt">网银/支付宝<small>通道项目 · 网关状态 · 维护公告</small></span>
+    <span class="tab-badge" id="badge-alipay">检测中…</span>
+  </button>
   <button class="tab" data-view="bank" role="tab" aria-selected="false">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3d9bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6M5 10v8m4.7-8v8m4.6-8v8M19 10v8M3 20h18"/></svg>
     <span class="tab-txt">银行<small>通道状态 · 维护时间表</small></span>
     <span class="tab-badge" id="badge-bank">—</span>
-  </button>
-  <button class="tab" data-view="alipay" role="tab" aria-selected="false">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1677ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>
-    <span class="tab-txt">支付宝<small>网关状态 · 维护公告</small></span>
-    <span class="tab-badge" id="badge-alipay">检测中…</span>
   </button>
 </nav>
 <div class="view" id="view-crypto">
@@ -656,6 +676,15 @@ __ROWS__
   </div>
   <div class="chaingrid c4" id="aligrid"></div>
   <div class="pboc-line" style="margin-top:10px">只代表从这台设备连得上支付宝网关，不代表每一笔支付都会成功</div>
+</div>
+<div class="section">
+  <div class="sec-head">
+    <div class="sec-title"><span class="bar" style="background:#1677ff"></span><h2>通道侦测项目</h2><span class="sub">按供应商分行 · 鼠标停在格子上看完整名称</span></div>
+    <span class="sec-meta">尚未接入侦测来源</span>
+  </div>
+  <div class="filters orgrow" id="chanFilters"></div>
+  <div class="chbox" id="changroups"></div>
+  <div class="pboc-line" style="margin-top:10px">目前只列出名单，灰点表示还没有侦测来源，不代表通道正常或异常</div>
 </div>
 <div class="section">
   <div class="sec-head">
@@ -821,8 +850,8 @@ __ROWS__
 </script>
 <script>
 (function(){
-  // ====== 视图切换：网址 #crypto / #bank / #alipay，自动刷新后停留在原分页 ======
-  var VIEWS=['crypto','bank','alipay'],VNAME={crypto:'虚拟币',bank:'银行',alipay:'支付宝'};
+  // ====== 视图切换：网址 #crypto / #alipay / #bank，自动刷新后停留在原分页 ======
+  var VIEWS=['crypto','alipay','bank'],VNAME={crypto:'虚拟币',alipay:'网银/支付宝',bank:'银行'};
   function show(v){
     if(VIEWS.indexOf(v)<0) v='crypto';
     VIEWS.forEach(function(k){
@@ -1045,9 +1074,36 @@ __ROWS__
   }
   document.getElementById('alireload').addEventListener('click',function(ev){ev.preventDefault();checkGateways();});
 
+  // ====== 通道侦测项目：名单来自 banks.json 的 channels，内部 / 外部 用按钮切换，一家供应商一行 ======
+  // 目前还没有侦测来源，格子前面的状态点一律是灰色
+  var chF='in'; try{chF=localStorage.getItem('monitorChan')||'in';}catch(e){}
+  function renderChannels(){
+    var groups=(CFG.channels&&CFG.channels.groups)||[],bt=document.getElementById('chanFilters'),box=document.getElementById('changroups');
+    bt.innerHTML='';
+    if(!groups.length){ box.innerHTML='<div class="tl-empty" style="border-top:none">banks.json 里还没有通道名单</div>'; return; }
+    if(!groups.some(function(g){return g.id===chF;})) chF=groups[0].id;
+    groups.forEach(function(g){
+      var n=0; g.providers.forEach(function(p){n+=p.items.length;});
+      var b=document.createElement('button'); b.textContent=g.name+' '+n; if(g.id===chF)b.className='active';
+      b.addEventListener('click',function(){ chF=g.id; try{localStorage.setItem('monitorChan',chF);}catch(e){} renderChannels(); });
+      bt.appendChild(b);
+    });
+    var html='';
+    groups.filter(function(g){return g.id===chF;})[0].providers.forEach(function(p){
+      var tiles='';
+      // s 是去掉供应商前缀的短名，n 是完整名称（放在悬停提示里），m 是商户号（括号显示在名称后面）
+      p.items.forEach(function(c){
+        var tip=c.n+(c.m?'（商户号 '+c.m+'）':'')+' ｜ 尚未接入侦测';
+        tiles+='<div class="btile idle" title="'+esc(tip)+'"><i></i><span>'+esc(c.s||c.n)+(c.m?'<small class="mid">（'+esc(c.m)+'）</small>':'')+'</span></div>';
+      });
+      html+='<div class="chrow'+(p.wide?' wide':'')+'"><div class="chprov" title="'+esc(p.p)+'">'+esc(p.p)+'<span>'+p.items.length+'</span></div><div class="chitems">'+tiles+'</div></div>';
+    });
+    box.innerHTML=html;
+  }
+
   var saved=null; try{saved=localStorage.getItem('monitorView');}catch(e){}
   show(location.hash.slice(1)||saved||'crypto');
-  renderBank(); renderAlipay(); checkGateways();
+  renderBank(); renderChannels(); renderAlipay(); checkGateways();
   setInterval(function(){renderBank();checkGateways();},60000);
   window.addEventListener('resize',renderBank);
 })();
