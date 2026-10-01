@@ -37,8 +37,42 @@ $StrictKw = '暂停|暫停|维护|維護|停机|停機|停充|停提|充值|儲�
 $SysKw    = '系统维护|系統維護|系统升级|系統升級|平台维护|平台維護|停机维护|停機維護|系统公告|系統公告|系统故障|系統故障|System Maintenance|System Upgrade'
 # 没点名哪条链的钱包 / 充提维护（「关于钱包维护的公告」「对部分网络 USDC 提现维护」）：可能波及目标链，也保留
 $MultiKw  = '关于钱包维护|關於錢包維護|部分网络\S{0,16}维护|部分網[絡路]\S{0,16}維護'
-# 明确排除（活动/理财/合约等杂项，命中即丢弃）
-$ExcludeKw = '空投|理财|理財|竞赛|競賽|活动|活動|Alpha|HODLer|Launchpool|Megadrop|奖励|獎勵|瓜分|持币|持幣|盘前|盤前|Pre-IPO|合约|合約|风险限额|風險限額|返佣|限时|限時|上线|上線|上市|理财竞技|杠杆|槓桿|保证金|保證金'
+# 明确排除（活动/理财等杂项，命中即丢弃）
+$ExcludeKw = '空投|理财|理財|竞赛|競賽|活动|活動|Alpha|HODLer|Launchpool|Megadrop|奖励|獎勵|瓜分|持币|持幣|盘前|盤前|Pre-IPO|返佣|限时|限時|理财竞技'
+# 合约 / 杠杆 / 上新类：通常跟充提无关，也排除；
+# 但标题同时提到「充提 / 钱包」又有「暂停 / 维护 / 升级」的（例如「合约升级暂停充提」），照样保留
+$SoftExcludeKw = '合约|合約|风险限额|風險限額|上线|上線|上市|杠杆|槓桿|保证金|保證金'
+$WalletKw = '充值|儲值|充提|提现|提現|提币|提幣|停充|停提|钱包|錢包|deposit|withdraw|wallet'
+$StopKw   = '暂停|暫停|维护|維護|停机|停機|停充|停提|停止|终止|終止|升级|升級|硬分叉|suspend|suspension|maintenance|halt|upgrade|hard fork'
+
+# ============ 链节点（网页的实时状态和 Telegram 的链异常检测共用这一份） ============
+# nodes 按顺序试：只要有一个节点回报出块正常，这条链就算正常，所以每条链都放了备用节点
+# web=$false 的节点只给脚本用（该节点不允许浏览器直连）
+# bt  = 大约几秒出一个块（网页用来判断「变慢 / 停摆」）
+# age = 超过多少秒没出新块，Telegram 就报异常
+$ChainDefs = @(
+  [ordered]@{ k='TRON'; n='TRON'; s='TRC20'; bt=3; age=180; nodes=@(
+    [ordered]@{ t='tron'; u='https://api.trongrid.io/wallet/getnowblock' },
+    [ordered]@{ t='tron'; u='https://tron-rpc.publicnode.com/wallet/getnowblock' }
+  ) },
+  [ordered]@{ k='BSC'; n='BSC'; s='BEP20'; bt=3; age=120; nodes=@(
+    [ordered]@{ t='evm'; u='https://bsc-rpc.publicnode.com' },
+    [ordered]@{ t='evm'; u='https://bsc-dataseed.bnbchain.org' }
+  ) },
+  [ordered]@{ k='ETH'; n='Ethereum'; s='ERC20'; bt=12; age=300; nodes=@(
+    [ordered]@{ t='evm'; u='https://ethereum-rpc.publicnode.com' },
+    [ordered]@{ t='evm'; u='https://eth.drpc.org' }
+  ) },
+  [ordered]@{ k='SOL'; n='Solana'; s='SPL'; bt=2; age=120; nodes=@(
+    [ordered]@{ t='sol'; u='https://solana-rpc.publicnode.com' },
+    [ordered]@{ t='sol'; u='https://api.mainnet-beta.solana.com'; web=$false },
+    [ordered]@{ t='sol'; u='https://solana-mainnet.gateway.tatum.io' }
+  ) },
+  [ordered]@{ k='TON'; n='TON'; s='TON'; bt=5; age=180; nodes=@(
+    [ordered]@{ t='ton'; u='https://toncenter.com/api/v3/masterchainInfo' },
+    [ordered]@{ t='tonapi'; u='https://tonapi.io/v2/blockchain/masterchain-head' }
+  ) }
+)
 
 # ============ 时间：虚拟币分页一律用北京时间（跟银行分页一致），不管脚本跑在哪个时区的机器上 ============
 # 接受 DateTimeOffset / DateTime / ISO 字符串，回传北京时间
@@ -58,10 +92,17 @@ function Get-Chains($title) {
 function Get-Level($title, $t) {
   # 新增网络 / 代币支持（「完成…网络集成，并开放充值」）不是恢复，只算相关
   if ($title -match '网络集成|網絡集成|網路整合|专属充值地址|專屬充值地址') { return 'info' }
+  # 「完成后 / 完成之后」是预告，不算已完成
+  $doneKw   = '已恢复|已恢復|已完成|已重新|现已|現已|(?:维护|維護|升级|升級)完成(?!后|後|之后|之後)|resumed|completed|restored'
+  $isResume = $title -match "恢復|恢复|重新开放|重新開放|开放充值|開放充值|resume|$doneKw"
+  $isStop   = $title -match '暂停|暫停|停止|停机|停機|停充|停提|維護|维护|suspend|suspension|paused|halt|delayed|maintenance'
+  # 「暂停」和「恢复」同时出现时：写明已恢复 / 已完成、又不是预告的才算恢复；
+  # 其余（「将暂停…完成后恢复」这类）一律当成维护 / 暂停 —— 宁可多提醒，也不要漏掉
+  if ($isResume -and $isStop -and (($title -notmatch $doneKw) -or ($title -match '将|將|计划|計劃|预计|預計|will|scheduled|upcoming'))) { $isResume = $false }
   # 明确"已恢复/已完成"
-  if ($title -match '恢復|恢复|已完成|已恢復|重新开放|重新開放|开放充值|開放充值|resume|resumed|completed|restored') { return 'resume' }
+  if ($isResume) { return 'resume' }
   # "暂停/停机/维护"类（真正需要注意的）
-  if ($title -match '暂停|暫停|停止|停机|停機|停充|停提|維護|维护|suspend|suspension|paused|halt|delayed|maintenance') {
+  if ($isStop) {
     # 超过 3 天前的不再红色警报；公告没说已恢复，所以只标「已过去」，不标「已恢复」
     if ($t -and ($t -lt $nowBJ.AddDays(-3))) { return 'past' }
     return 'alert'
@@ -72,12 +113,18 @@ function Get-Level($title, $t) {
   return 'info'
 }
 # 保留条件：涉及5链且是充提/维护语境，或交易所系统维护
-function Should-Keep($title) {
-  if ($title -match $ExcludeKw) { return $false }
-  if ($title -match $SysKw) { return $true }
-  if (($title -match $StrictKw) -and ((Get-Chains $title).Count -gt 0)) { return $true }
-  if ($title -match $MultiKw) { return $true }
-  return $false
+# 本来会收、但被排除词挡掉的，标题记进 $cxSkipped，方便核对有没有误杀
+$cxSkipped = New-Object System.Collections.ArrayList
+function Should-Keep($title, $ex) {
+  $hit = ($title -match $SysKw) -or (($title -match $StrictKw) -and ((Get-Chains $title).Count -gt 0)) -or ($title -match $MultiKw)
+  if (-not $hit) { return $false }
+  $drop = ($title -match $ExcludeKw) -or (($title -match $SoftExcludeKw) -and -not (($title -match $WalletKw) -and ($title -match $StopKw)))
+  if ($drop) {
+    $line = "${ex}：$title"
+    if (-not $cxSkipped.Contains($line)) { [void]$cxSkipped.Add($line) }
+    return $false
+  }
+  return $true
 }
 # Coinbase 英文标题 → 中文（措辞固定，规则翻译）
 function Translate-CB($t) {
@@ -176,9 +223,49 @@ function Test-Chain($type, $url, $maxAgeSec) {
       $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$r.last.gen_utime
       if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
     }
+    if ($type -eq 'tonapi') {
+      # TON 的备用来源（tonapi.io），栏位名跟 toncenter 不一样
+      $r = Invoke-RestMethod -Uri $url -TimeoutSec 15
+      if (-not $r.gen_utime) { return "无法获取区块" }
+      $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [int64]$r.gen_utime
+      if ($age -le $maxAgeSec) { return $null } else { return "出块停滞约 $([int]$age) 秒" }
+    }
     return $null
   } catch { return "连接失败/无响应" }
 }
+# 检测一条链（$ChainDefs 里的一项）：按顺序试每个节点，有一个回报出块正常就算正常，回传 $null
+# 都不正常时回传 kind + reason：
+#   stall = 有节点连得上、但出块停滞（链本身可能出问题）
+#   down  = 所有节点都没有正常回应（看不出链的状态，不一定是链的问题）
+function Test-ChainDef($def) {
+  $stall = $null; $other = $null
+  foreach ($nd in $def.nodes) {
+    $r = Test-Chain $nd.t $nd.u $def.age
+    if (-not $r) { return $null }
+    if ($r -match '^出块停滞') { if (-not $stall) { $stall = $r } } else { $other = $r }
+  }
+  if ($stall) { return [pscustomobject]@{ kind = 'stall'; reason = $stall } }
+  return [pscustomobject]@{ kind = 'down'; reason = "$(@($def.nodes).Count) 个检测节点都没有正常回应（$other）" }
+}
+
+# 每家交易所的抓取情况：okN = 成功拿到数据的请求数，failN = 失败的请求数（只算第一页，新公告都在第一页）
+$cxNames = @{ Binance = '币安'; OKX = '欧易'; Coinbase = 'Coinbase' }
+$cxSrc = [ordered]@{}
+foreach ($k in 'Binance', 'OKX', 'Coinbase') { $cxSrc[$k] = [pscustomobject]@{ name = $k; okN = 0; failN = 0 } }
+
+# 币安公告的发布时间缓存（bn-dates.txt，一行一条：公告编号|毫秒时间戳|d 或 f）
+#   d = 从详情接口查到的真正发布时间，以后不用再查
+#   f = 详情接口查不到时，用「第一次看到这篇公告」的时间顶替，之后每次运行会再试着查
+$bnDateFile = Join-Path $ScriptDir 'bn-dates.txt'
+$bnDates = [ordered]@{}; $bnSeen = @{}; $bnNoDate = 0
+if (Test-Path $bnDateFile) {
+  foreach ($ln in @(Get-Content $bnDateFile -Encoding UTF8)) {
+    $p = "$ln".Trim().Split('|')
+    if (($p.Count -ge 3) -and $p[0]) { try { $bnDates[$p[0]] = [pscustomobject]@{ ms = [int64]$p[1]; k = $p[2] } } catch {} }
+  }
+}
+$bnBoot = ($bnDates.Count -eq 0)   # 还没有缓存（第一次运行）：分不出哪些是新公告
+function Ms-ToBJ($ms) { return (To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$ms))) }
 
 $items = New-Object System.Collections.ArrayList
 
@@ -192,20 +279,35 @@ foreach ($cid in 48,49,157,161,128,93) {
     try {
       $r = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query?catalogId=$cid&pageNo=$pno&pageSize=50" $bnHeaders
       if (-not $r.data.articles -or @($r.data.articles).Count -eq 0) { break }
+      $cxSrc['Binance'].okN++
       foreach ($a in $r.data.articles) {
-        if (Should-Keep $a.title) {
+        if (Should-Keep $a.title 'Binance') {
           # 币安中文公告标题里的日期就是东八区（北京时间）的日期；只有日期没有钟点，网页上只显示日期
           $t = $null; $dateOnly = $false
           if ($a.title -match '(\d{4}-\d{2}-\d{2})') { try { $t = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null); $dateOnly = $true } catch {} }
           if (-not $t) {
-            try {
-              Start-Sleep -Milliseconds 200
-              $det = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode=$($a.code)" $bnHeaders
-              if ($det.data.publishDate) { $t = To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$det.data.publishDate)) }
-            } catch {}
+            $code = [string]$a.code; $bnSeen[$code] = $true
+            $c = $bnDates[$code]
+            if ($c -and ($c.k -eq 'd')) { $t = Ms-ToBJ $c.ms }
+            else {
+              try {
+                Start-Sleep -Milliseconds 200
+                $det = Get-Json "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode=$code" $bnHeaders
+                if ($det.data.publishDate) {
+                  $t = Ms-ToBJ $det.data.publishDate
+                  $bnDates[$code] = [pscustomobject]@{ ms = [int64]$det.data.publishDate; k = 'd' }
+                }
+              } catch {}
+              if (-not $t) {
+                # 查不到发布时间：以前看到过的，沿用第一次看到的时间（不会把旧公告当成今天的新公告）
+                if ($c) { $t = Ms-ToBJ $c.ms }
+                # 从没看到过的才是新公告，把现在记成它的时间
+                elseif (-not $bnBoot) { $bnDates[$code] = [pscustomobject]@{ ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); k = 'f' }; $t = $nowBJ }
+                # 第一次运行分不出新旧：先跳过，下次运行再查
+                else { $bnNoDate++; continue }
+              }
+            }
           }
-          # 两边都拿不到才用当天（会被当成今天的公告）
-          if (-not $t) { $t = $nowBJ }
           [void]$items.Add([pscustomobject]@{
             Exchange = 'Binance'
             DateOnly = $dateOnly
@@ -217,9 +319,20 @@ foreach ($cid in 48,49,157,161,128,93) {
           })
         }
       }
-    } catch { Write-Host "    币安分类 $cid 第$pno页 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    } catch {
+      if ($pno -eq 1) { $cxSrc['Binance'].failN++ }
+      Write-Host "    币安分类 $cid 第 $pno 页抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
   }
 }
+if ($bnNoDate) { Write-Host "    币安有 $bnNoDate 条公告查不到发布时间，这次先跳过，下次运行再查" -ForegroundColor DarkYellow }
+# 存回缓存：这次用到的排在后面，最多留 1000 条
+try {
+  # 第一次运行只要币安列表抓得到，就留一行记号：下次起不再算「第一次」，没看过的公告会当成新公告处理
+  if ($bnBoot -and ($cxSrc['Binance'].okN -gt 0) -and (-not $bnDates.Contains('_init'))) { $bnDates['_init'] = [pscustomobject]@{ ms = 0; k = 'x' } }
+  $keys =@($bnDates.Keys | Where-Object { -not $bnSeen[$_] }) + @($bnDates.Keys | Where-Object { $bnSeen[$_] })
+  @($keys | Select-Object -Last 1000 | ForEach-Object { "$_|$($bnDates[$_].ms)|$($bnDates[$_].k)" }) | Out-File -FilePath $bnDateFile -Encoding UTF8
+} catch { Write-Host "    币安时间缓存写入失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
 # ============ 欧易 OKX（充提暂停/恢复专属分类） ============
 $okxHeaders = @{ 'Accept'='application/json'; 'Accept-Language'='zh-CN'; 'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
@@ -228,8 +341,9 @@ foreach ($pg in 1..5) {
   try {
     $r = Get-Json "https://www.okx.com/api/v5/support/announcements?annType=announcements-deposit-withdrawal-suspension-resumption&page=$pg" $okxHeaders
     if ($r.data.Count -gt 0) {
+      $cxSrc['OKX'].okN++
       foreach ($d in $r.data[0].details) {
-        if (-not (Should-Keep $d.title)) { continue }
+        if (-not (Should-Keep $d.title 'OKX')) { continue }
         $t = try { To-BJ ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$d.pTime)) } catch { $nowBJ }
         [void]$items.Add([pscustomobject]@{
           Exchange = 'OKX'
@@ -241,7 +355,10 @@ foreach ($pg in 1..5) {
         })
       }
     }
-  } catch { Write-Host "    欧易第 $pg 页抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+  } catch {
+    if ($pg -eq 1) { $cxSrc['OKX'].failN++ }
+    Write-Host "    欧易第 $pg 页抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow
+  }
 }
 
 # ============ Coinbase（状态页：充提事件 + 计划维护） ============
@@ -249,8 +366,9 @@ $cbHeaders = @{ 'Accept'='application/json'; 'User-Agent'='Mozilla/5.0 (Windows 
 # 充提暂停/延迟等事件
 try {
   $inc = Get-Json "https://status.coinbase.com/api/v2/incidents.json" $cbHeaders
+  $cxSrc['Coinbase'].okN++
   foreach ($e in $inc.incidents) {
-    if (Should-Keep $e.name) {
+    if (Should-Keep $e.name 'Coinbase') {
       $t = try { To-BJ $e.created_at } catch { $nowBJ }
       $lv = if ($e.status -match 'resolved|completed|postmortem') { 'resume' } else { 'alert' }
       [void]$items.Add([pscustomobject]@{
@@ -259,12 +377,13 @@ try {
       })
     }
   }
-} catch { Write-Host "    Coinbase 事件抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+} catch { $cxSrc['Coinbase'].failN++; Write-Host "    Coinbase 事件抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 # 计划维护
 try {
   $mnt = Get-Json "https://status.coinbase.com/api/v2/scheduled-maintenances.json" $cbHeaders
+  $cxSrc['Coinbase'].okN++
   foreach ($e in $mnt.scheduled_maintenances) {
-    if (Should-Keep $e.name) {
+    if (Should-Keep $e.name 'Coinbase') {
       $t = try { To-BJ $e.scheduled_for } catch { $nowBJ }
       $lv = if ($e.status -match 'completed') { 'resume' } else { 'alert' }
       [void]$items.Add([pscustomobject]@{
@@ -273,7 +392,7 @@ try {
       })
     }
   }
-} catch { Write-Host "    Coinbase 维护抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+} catch { $cxSrc['Coinbase'].failN++; Write-Host "    Coinbase 维护抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
 # ============ OKX 场外 USDT/CNY 快照（买入价 / 卖出价） ============
 $okxBuy='—'; $okxSell='—'
@@ -300,12 +419,30 @@ $todayAlerts = @($items | Where-Object { $_.Level -eq 'alert' -and $_.Time.Date 
 $totalCount = @($items).Count
 Write-Host "  完成：共 $totalCount 条相关公告，其中今日维护/暂停 $todayAlerts 条" -ForegroundColor Green
 
+# ============ 公告来源有没有抓成功（抓不到时，「没有公告」不等于「正常」） ============
+$cxDown = @($cxSrc.Values | Where-Object { $_.okN -eq 0 } | ForEach-Object { $cxNames[$_.name] })                        # 完全连不上
+$cxPart = @($cxSrc.Values | Where-Object { ($_.okN -gt 0) -and ($_.failN -gt 0) } | ForEach-Object { $cxNames[$_.name] }) # 部分请求失败
+$cxWarn = ''
+if ($cxDown.Count -or $cxPart.Count) {
+  $parts = @()
+  if ($cxDown.Count) { $parts += "$($cxDown -join '、') 连不上" }
+  if ($cxPart.Count) { $parts += "$($cxPart -join '、') 部分抓取失败" }
+  $cxWarn = "公告来源异常：$($parts -join '；')"
+  Write-Host "  $cxWarn" -ForegroundColor DarkYellow
+}
+$cxSrcLine = @($cxSrc.Values | ForEach-Object { $_.name + $(if ($_.okN -eq 0) { ' ✗ 连接失败' } elseif ($_.failN -gt 0) { ' ⚠ 部分失败' } else { ' ✓' }) }) -join ' · '
+if ($cxSkipped.Count) {
+  Write-Host "  被排除词过滤掉的公告 $($cxSkipped.Count) 条：" -ForegroundColor DarkGray
+  foreach ($k in $cxSkipped) { Write-Host "    - $k" -ForegroundColor DarkGray }
+}
+
 # ============ 生成公告行 HTML ============
 $levelText = @{ 'alert'='维护/暂停'; 'resume'='已恢复'; 'past'='已过去'; 'upgrade'='升级'; 'info'='相关' }
 $exClass   = @{ 'Binance'='ex-bn'; 'OKX'='ex-okx'; 'Coinbase'='ex-cb' }
 $rowsSb = New-Object System.Text.StringBuilder
 if ($totalCount -eq 0) {
-  [void]$rowsSb.Append('<div class="empty">当前无维护 / 暂停 / 升级相关公告<br><span>各链充提大概率正常 · 每 5 分钟自动更新</span></div>')
+  if ($cxWarn) { [void]$rowsSb.Append('<div class="empty" style="color:var(--warn)">公告来源抓取失败，目前无法判断有没有维护公告<br><span>请直接到交易所官网核实 · 每 5 分钟自动重试</span></div>') }
+  else { [void]$rowsSb.Append('<div class="empty">当前无维护 / 暂停 / 升级相关公告<br><span>各链充提大概率正常 · 每 5 分钟自动更新</span></div>') }
 } else {
   foreach ($it in $items) {
     $chainAttr = ($it.Chains -join ' ')
@@ -333,8 +470,20 @@ if ($totalCount -eq 0) {
 $rows = $rowsSb.ToString()
 
 $updated = $nowBJ.ToString('yyyy-MM-dd HH:mm:ss')
-$bannerClass = if ($todayAlerts -gt 0) { 'has-alert' } else { 'no-alert' }
-$bannerText  = if ($todayAlerts -gt 0) { "今日发现 $todayAlerts 条维护 / 暂停公告，请留意相关链的充提" } else { "今日暂无新的维护 / 暂停公告" }
+$bannerClass = if ($todayAlerts -gt 0) { 'has-alert' } elseif ($cxWarn) { 'has-warn' } else { 'no-alert' }
+$bannerText  = if ($todayAlerts -gt 0) { "今日发现 $todayAlerts 条维护 / 暂停公告，请留意相关链的充提" + $(if ($cxWarn) { "（另外$cxWarn，列表可能不完整）" } else { '' }) }
+               elseif ($cxWarn) { "$cxWarn —— 下面的列表可能不完整，没有公告不代表正常" }
+               else { "今日暂无新的维护 / 暂停公告" }
+
+# 被排除词过滤掉的公告：放在页脚，点开可以核对有没有误杀
+$cxSkipHtml = ''
+if ($cxSkipped.Count) {
+  $cxSkipHtml = "<details class=`"skipbox`"><summary>另有 $($cxSkipped.Count) 条公告被排除词过滤（合约 / 活动 / 上新类），点开核对</summary><div>" + (@($cxSkipped | ForEach-Object { Esc $_ }) -join '<br>') + '</div></details>'
+}
+# 链节点名单给网页用：去掉只给脚本用的节点
+$chainsJson = ConvertTo-Json -Depth 5 -Compress -InputObject @($ChainDefs | ForEach-Object {
+  [ordered]@{ k = $_.k; n = $_.n; s = $_.s; bt = $_.bt; nodes = @($_.nodes | Where-Object { $_.web -ne $false } | ForEach-Object { [ordered]@{ t = $_.t; u = $_.u } }) }
+})
 
 # ============ HTML 模板 ============
 $tpl = @'
@@ -419,6 +568,9 @@ $tpl = @'
   .empty span{display:block;font-size:13px;color:var(--sub);font-weight:400;margin-top:8px}
   footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--line);text-align:center;color:var(--faint);font-size:11.5px;line-height:1.9;font-family:var(--mono)}
   footer a{color:var(--accent);text-decoration:none}
+  .skipbox{margin-top:8px}
+  .skipbox summary{cursor:pointer;color:var(--sub)}
+  .skipbox div{text-align:left;margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-family:var(--sans);line-height:1.8}
   /* 链实时状态 */
   .chaingrid{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   @media(max-width:680px){.chaingrid{grid-template-columns:repeat(2,1fr)}}
@@ -654,9 +806,10 @@ __ROWS__
   <div class="pager" id="pager"></div>
 </div>
 <footer>
-  公告更新时间：__UPDATED__（北京时间，公告时间也都是北京时间）｜ 来源：Binance / OKX / Coinbase 官方接口 · 每 5 分钟由 GitHub 自动更新<br>
-  链实时状态 &amp; 汇率：网页内每 15~60 秒自动刷新（TronGrid / PublicNode / Toncenter / CoinGecko）<br>
+  公告更新时间：__UPDATED__（北京时间，公告时间也都是北京时间）｜ 来源（官方接口）：__CXSRC__ · 每 5 分钟由 GitHub 自动更新<br>
+  链实时状态 &amp; 汇率：网页内每 15~60 秒自动刷新（TronGrid / PublicNode / Toncenter / CoinGecko，每条链另有备用节点）<br>
   仅显示近一年内、涉及 TRON/BSC/ETH/TON/SOL 或交易所系统维护的公告 ｜ 点卡片可跳转官方原文
+  __CXSKIP__
 </footer>
 </div><!-- /view-crypto -->
 <div class="view" id="view-bank" hidden>
@@ -792,29 +945,42 @@ __ROWS__
   });
   applyFilter();
   // ====== 链实时状态：浏览器直接读区块链节点，每 15 秒自动更新 ======
-  var CHAINS=[
-    {k:'TRON',n:'TRON',s:'TRC20',t:'tron',u:'https://api.trongrid.io/wallet/getnowblock',bt:3},
-    {k:'BSC', n:'BSC', s:'BEP20',t:'evm', u:'https://bsc-rpc.publicnode.com',bt:3},
-    {k:'ETH', n:'Ethereum',s:'ERC20',t:'evm',u:'https://ethereum-rpc.publicnode.com',bt:12},
-    {k:'SOL', n:'Solana',s:'SPL', t:'sol', u:'https://solana-rpc.publicnode.com',bt:2},
-    {k:'TON', n:'TON', s:'TON',  t:'ton', u:'https://toncenter.com/api/v3/masterchainInfo',bt:5}
-  ];
+  // 链和节点的名单由脚本里的 $ChainDefs 生成（跟 Telegram 的链异常检测共用一份）
+  var CHAINS=__CHAINS__;
   var last={},failN={};
   // 页面上的「更新 xx:xx:xx」一律显示北京时间，不跟着看网页的那台设备的时区走
   function bjClock(){var d=new Date(Date.now()+8*3600000);function p(n){return (n<10?'0':'')+n;}return p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());}
-  function jrpc(u,m,p){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:m,params:p||[],id:1})}).then(function(r){return r.json();});}
-  function fetchChain(c){
-    if(c.t==='tron'){return fetch(c.u,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){return {h:j.block_header.raw_data.number,ts:j.block_header.raw_data.timestamp};});}
-    if(c.t==='evm'){return jrpc(c.u,'eth_getBlockByNumber',['latest',false]).then(function(j){return {h:parseInt(j.result.number,16),ts:parseInt(j.result.timestamp,16)*1000};});}
+  // 8 秒没回应就放弃：节点卡住不回的话，要能轮到备用节点
+  function tfetch(u,o){var c=new AbortController(),to=setTimeout(function(){c.abort();},8000);o=o||{};o.signal=c.signal;return fetch(u,o).then(function(r){clearTimeout(to);return r;},function(e){clearTimeout(to);throw e;});}
+  function jrpc(u,m,p){return tfetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:m,params:p||[],id:1})}).then(function(r){return r.json();});}
+  function fetchNode(nd){
+    if(nd.t==='tron'){return tfetch(nd.u,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json();}).then(function(j){return {h:j.block_header.raw_data.number,ts:j.block_header.raw_data.timestamp};});}
+    if(nd.t==='evm'){return jrpc(nd.u,'eth_getBlockByNumber',['latest',false]).then(function(j){return {h:parseInt(j.result.number,16),ts:parseInt(j.result.timestamp,16)*1000};});}
     // Solana / TON 都看最新区块的出块时间：只问节点健不健康的话，整条链一起停摆时看不出来
-    if(c.t==='sol'){return jrpc(c.u,'getSlot',[{commitment:'confirmed'}]).then(function(s){
-      return jrpc(c.u,'getBlockTime',[s.result]).then(function(b){
+    if(nd.t==='sol'){return jrpc(nd.u,'getSlot',[{commitment:'confirmed'}]).then(function(s){
+      return jrpc(nd.u,'getBlockTime',[s.result]).then(function(b){
         if(b.result) return {h:s.result,ts:b.result*1000};
         // 偶尔取不到出块时间：退回用节点健康状态判断
-        return jrpc(c.u,'getHealth').then(function(a){return {h:s.result,health:a.result||(a.error&&a.error.message)||'?'};});
+        return jrpc(nd.u,'getHealth').then(function(a){return {h:s.result,health:a.result||(a.error&&a.error.message)||'?'};});
       });
     });}
-    if(c.t==='ton'){return fetch(c.u).then(function(r){return r.json();}).then(function(j){return {h:j.last.seqno,ts:j.last.gen_utime*1000};});}
+    if(nd.t==='ton'){return tfetch(nd.u).then(function(r){return r.json();}).then(function(j){return {h:j.last.seqno,ts:j.last.gen_utime*1000};});}
+    if(nd.t==='tonapi'){return tfetch(nd.u).then(function(r){return r.json();}).then(function(j){return {h:j.seqno,ts:j.gen_utime*1000};});}
+    return Promise.reject(new Error('unknown node type'));
+  }
+  // 按顺序试每个节点：有一个回报正常就用它；都不正常时用第一个拿得到数据的结果；全部连不上才算读取失败
+  function fetchChain(c){
+    var i=0,best=null;
+    function next(){
+      if(i>=c.nodes.length) return best?Promise.resolve(best):Promise.reject(new Error('all nodes failed'));
+      var nd=c.nodes[i++];
+      return fetchNode(nd).then(function(d){
+        if(judge(c,d).cls==='ok') return d;
+        if(!best) best=d;
+        return next();
+      },function(){ return next(); });
+    }
+    return next();
   }
   function judge(c,d){
     var now=Date.now();
@@ -936,10 +1102,13 @@ __ROWS__
     else if(warn.length){ss.className='warn';ss.textContent='● '+warn.join(' · ');}
     else if(okN===VIEWS.length){ss.className='ok';ss.textContent='● 全部正常';}
   }
+  var CXBAD=__CXBAD__;   // 这次有几家交易所的公告没抓成功
   var origHandle=window.handleAlerts;
   window.handleAlerts=function(newlyBad,badNow){
     origHandle(newlyBad,badNow);
-    setBadge('crypto',badNow.length?'bad':'ok',badNow.length?(badNow.length+' 链异常'):'正常');
+    if(badNow.length) setBadge('crypto','bad',badNow.length+' 链异常');
+    else if(CXBAD) setBadge('crypto','warn','公告来源异常');
+    else setBadge('crypto','ok','正常');
   };
 
   // ====== 数据：名单来自 banks.json，公告来自抓取脚本生成的 bank-data.json ======
@@ -976,12 +1145,12 @@ __ROWS__
     return '<a class="card lvl-'+lv+'" href="'+esc(e.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex '+chip+'">'+e.bank+'</span><span class="badge b-'+lv+'">'+tx+'</span><span class="src">'+esc(e.src)+'</span><span class="time">'+win(e)+'</span></div><div class="title">'+esc(e.title)+'</div><div class="scope">影响范围：'+esc(e.scope)+'</div></a>';
   }
   function srcLine(names){
-    return '来源：'+DATA.sources.filter(function(s){return names.indexOf(s.name)>=0;}).map(function(s){return s.name+(s.ok?' ✓':' ✗ 连接失败');}).join(' · ');
+    return '来源：'+DATA.sources.filter(function(s){return names.indexOf(s.name)>=0;}).map(function(s){return s.name+(!s.ok?' ✗ 连接失败':(s.warn?' ⚠ '+s.warn:' ✓'));}).join(' · ');
   }
-  // 连不上的公告来源；抓取程序整个没跑成功时也算
+  // 有问题的公告来源：连不上，或连得上但内容读不出来（warn，多半是网页改版）；抓取程序整个没跑成功时也算
   function srcBad(names){
     if(!DATA.updated) return ['抓取程序没有运行'];
-    return DATA.sources.filter(function(s){return names.indexOf(s.name)>=0&&!s.ok;}).map(function(s){return s.name;});
+    return DATA.sources.filter(function(s){return names.indexOf(s.name)>=0&&(!s.ok||s.warn);}).map(function(s){return s.name;});
   }
   function skippedN(isAli){ return (DATA.skipped||[]).filter(function(t){return (t.indexOf('支付宝：')===0)===isAli;}).length; }
 
@@ -1061,7 +1230,7 @@ __ROWS__
     else if(cnt.stop){bn.className='banner has-alert';bn.textContent='当前 '+cnt.stop+' 家银行维护中、不可使用'+(soonN?('，24 小时内还有 '+soonN+' 项即将维护'):'')+'，请留意相关通道的出入款';setBadge('bank','bad',cnt.stop+' 家维护中');}
     else if(soonN){bn.className='banner has-warn';bn.textContent='24 小时内有 '+soonN+' 项即将维护，当前通道全部正常';setBadge('bank','warn',soonN+' 项即将维护');}
     else if(cnt.part){bn.className='banner has-warn';bn.textContent=cnt.part+' 家银行有官方维护公告，部分服务可能受影响，通道未必不可用';setBadge('bank','warn',cnt.part+' 家官方公告');}
-    else if(srcBad(['易宝支付','快钱']).length){bn.className='banner has-warn';bn.textContent='公告来源连不上（'+srcBad(['易宝支付','快钱']).join('、')+'），目前显示的状态可能不准';setBadge('bank','warn','来源异常');}
+    else if(srcBad(['易宝支付','快钱']).length){bn.className='banner has-warn';bn.textContent='公告来源异常（'+srcBad(['易宝支付','快钱']).join('、')+'），目前显示的状态可能不准';setBadge('bank','warn','来源异常');}
     else{bn.className='banner no-alert';bn.textContent='当前无维护，24 小时内也没有计划维护';setBadge('bank','ok','正常');}
     // 公告列表
     var order={now:0,soon:1,later:2,done:3};
@@ -1122,7 +1291,7 @@ __ROWS__
     else if(soonN){bn.className='banner has-warn';bn.textContent='支付宝 24 小时内有计划维护';setBadge('alipay','warn','即将维护');}
     else if(fresh){bn.className='banner has-warn';bn.textContent='近 3 天有 '+fresh+' 条支付宝维护 / 异常公告';setBadge('alipay','warn',fresh+' 条新公告');}
     else if(slowGw){bn.className='banner has-warn';bn.textContent=slowGw+' 个支付宝网关响应偏慢';setBadge('alipay','warn','响应偏慢');}
-    else if(srcBad(['支付宝开放平台']).length){bn.className='banner has-warn';bn.textContent='支付宝公告来源连不上，公告区可能不完整'+(gw?'；网关连线正常':'');setBadge('alipay','warn','来源异常');}
+    else if(srcBad(['支付宝开放平台']).length){bn.className='banner has-warn';bn.textContent='支付宝公告来源异常，公告区可能不完整'+(gw?'；网关连线正常':'');setBadge('alipay','warn','来源异常');}
     else if(gw){bn.className='banner no-alert';bn.textContent='当前无维护公告，网关连线正常';setBadge('alipay','ok','正常');}
     else{bn.className='banner no-alert';bn.textContent='当前无维护公告，网关检测中…';}
     var order={now:0,soon:1,later:2,done:3};
@@ -1189,6 +1358,7 @@ try {
 } catch { Write-Host "    银行 / 支付宝 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 
 $html = $tpl.Replace('__BANNERCLASS__', $bannerClass).Replace('__BANNERTEXT__', $bannerText).Replace('__ROWS__', $rows).Replace('__OKXBUY__', $okxBuy).Replace('__OKXSELL__', $okxSell).Replace('__UPDATED__', $updated)
+$html = $html.Replace('__CXSRC__', $cxSrcLine).Replace('__CXSKIP__', $cxSkipHtml).Replace('__CXBAD__', [string]($cxDown.Count + $cxPart.Count)).Replace('__CHAINS__', $chainsJson)
 # JSON 直接嵌进网页；把 </ 转义，避免内容里出现 </script> 把网页截断
 $html = $html.Replace('__BANK_CFG__', $bankCfgJson.Replace('</', '<\/')).Replace('__BANK_DATA__', $bankDataJson.Replace('</', '<\/'))
 # 「重新抓取」链接指向本脚本的 bat 启动器
@@ -1265,29 +1435,80 @@ if ($tgToken -and $tgChat) {
   Write-Host "  Telegram：本次新推送 虚拟币 $newCount 条，银行 / 支付宝 $bankPush 条" -ForegroundColor Cyan
 
   # ---- 链本身异常检测 + 推送（含恢复通知，自动去重）----
+  # chainlog.txt 记的是「已经通知过的异常」，一行一条：链名|stall（出块停滞）或 链名|down（节点都连不上）
+  # 通知发成功才记下来；发不出去的不记，下次运行会再发一次
   $chainLogFile = Join-Path $ScriptDir 'chainlog.txt'
-  $prevBad = @(); if (Test-Path $chainLogFile) { $prevBad = @(Get-Content $chainLogFile -Encoding UTF8 | Where-Object { $_ }) }
-  $chainDefs = @(
-    @{ n='TRON'; t='tron'; u='https://api.trongrid.io/wallet/getnowblock'; age=180 },
-    @{ n='BSC';  t='evm';  u='https://bsc-rpc.publicnode.com'; age=120 },
-    @{ n='ETH';  t='evm';  u='https://ethereum-rpc.publicnode.com'; age=300 },
-    @{ n='SOL';  t='sol';  u='https://solana-rpc.publicnode.com'; age=120 },
-    @{ n='TON';  t='ton';  u='https://toncenter.com/api/v3/masterchainInfo'; age=180 }
-  )
-  $nowBad = @()
-  foreach ($ch in $chainDefs) {
-    $reason = Test-Chain $ch.t $ch.u $ch.age
-    # 第一次异常先等几秒再测一次，两次都异常才算：避免节点偶尔没回应就误报
-    if ($reason) { Start-Sleep -Seconds 4; $reason = Test-Chain $ch.t $ch.u $ch.age }
-    if ($reason) {
-      $nowBad += $ch.n
-      if ($prevBad -notcontains $ch.n) { Send-TG $tgToken $tgChat "🔴 链异常 · $($ch.n)`n$reason`n请留意该链充提是否受影响。" }
-    } elseif ($prevBad -contains $ch.n) {
-      Send-TG $tgToken $tgChat "🟢 链已恢复 · $($ch.n)`n出块恢复正常。"
+  $prevState = @{}
+  if (Test-Path $chainLogFile) {
+    foreach ($ln in @(Get-Content $chainLogFile -Encoding UTF8 | Where-Object { $_ })) {
+      $p = "$ln".Trim().Split('|')
+      # 旧版只记链名，没有后面的种类：当成出块停滞
+      if ($p[0]) { $prevState[$p[0]] = $(if (($p.Count -gt 1) -and $p[1]) { $p[1] } else { 'stall' }) }
     }
   }
-  @($nowBad) | Out-File -FilePath $chainLogFile -Encoding UTF8
-  Write-Host "  链检测：当前异常 $($nowBad.Count) 条" -ForegroundColor Cyan
+  $newState = [ordered]@{}; $chainStall = @(); $chainDown = @()
+  foreach ($ch in $ChainDefs) {
+    $r = Test-ChainDef $ch
+    # 第一次异常先等几秒再测一次，两次都异常才算：避免节点偶尔没回应就误报
+    if ($r) { Start-Sleep -Seconds 4; $r = Test-ChainDef $ch }
+    $prev = $prevState[$ch.k]
+    if ($r) {
+      if ($r.kind -eq 'stall') { $chainStall += $ch.k } else { $chainDown += $ch.k }
+      if ($prev -eq $r.kind) { $newState[$ch.k] = $prev }   # 这个异常已经通知过，不重复发
+      else {
+        $msg = if ($r.kind -eq 'stall') { "🔴 链异常 · $($ch.k)`n$($r.reason)`n请留意该链充提是否受影响。" }
+               else { "🟡 节点连不上 · $($ch.k)`n$($r.reason)`n目前看不出这条链的状态，不一定是链本身出问题；恢复连线后会再通知。" }
+        if (Send-TGOk $tgToken $tgChat $msg) { $newState[$ch.k] = $r.kind } elseif ($prev) { $newState[$ch.k] = $prev }
+      }
+    } elseif ($prev) {
+      $msg = if ($prev -eq 'stall') { "🟢 链已恢复 · $($ch.k)`n出块恢复正常。" } else { "🟢 节点恢复连线 · $($ch.k)`n出块正常。" }
+      # 恢复通知发不出去：先留着记录，下次再发
+      if (-not (Send-TGOk $tgToken $tgChat $msg)) { $newState[$ch.k] = $prev }
+    }
+  }
+  @($newState.GetEnumerator() | ForEach-Object { "$($_.Key)|$($_.Value)" }) | Out-File -FilePath $chainLogFile -Encoding UTF8
+  Write-Host "  链检测：出块异常 $($chainStall.Count) 条，节点连不上 $($chainDown.Count) 条" -ForegroundColor Cyan
+
+  # ---- 公告来源连续失败提醒（含恢复通知）----
+  # 来源连不上、或连得上但内容读不出来（多半是网页改版）时，「无维护」不可信，所以连续几次都这样就提醒一次
+  # srcfail.txt 一行一条：来源名|连续失败次数|是否已通知(1/0)
+  $SrcFailN = 3   # 连续失败几次才提醒（每 5 分钟跑一次，3 次约 15 分钟）
+  $srcNow = [ordered]@{}   # 这次有问题的来源 → 原因
+  foreach ($s in $cxSrc.Values) {
+    if ($s.okN -eq 0) { $srcNow["$($cxNames[$s.name])公告"] = '连不上' }
+    elseif ($s.failN -gt 0) { $srcNow["$($cxNames[$s.name])公告"] = '部分请求失败' }
+  }
+  if ($bankData) {
+    foreach ($s in @($bankData.sources)) {
+      if (-not $s) { continue }
+      if (-not $s.ok) { $srcNow[[string]$s.name] = '连不上' } elseif ($s.warn) { $srcNow[[string]$s.name] = [string]$s.warn }
+    }
+  } else { $srcNow['银行 / 支付宝抓取程序'] = '没有跑成功' }
+  $srcFile = Join-Path $ScriptDir 'srcfail.txt'
+  $srcPrev = @{}
+  if (Test-Path $srcFile) {
+    foreach ($ln in @(Get-Content $srcFile -Encoding UTF8 | Where-Object { $_ })) {
+      $p = "$ln".Trim().Split('|')
+      if ($p.Count -ge 3) { try { $srcPrev[$p[0]] = [pscustomobject]@{ n = [int]$p[1]; sent = ($p[2] -eq '1') } } catch {} }
+    }
+  }
+  $srcNext = [ordered]@{}
+  foreach ($name in @($srcNow.Keys)) {
+    $o = $srcPrev[$name]; $cnt = 1; $sent = $false
+    # 已经通知过的不再往上数（否则这个文件每次运行都会变）
+    if ($o) { $sent = $o.sent; $cnt = if ($o.sent) { $o.n } else { $o.n + 1 } }
+    if (($cnt -ge $SrcFailN) -and (-not $sent)) {
+      $sent = [bool](Send-TGOk $tgToken $tgChat "⚠ 公告来源异常 · $name`n$($srcNow[$name])（已连续 $cnt 次）`n修好之前收不到这个来源的维护公告，它显示「无维护」不可信。")
+    }
+    $srcNext[$name] = "$cnt|$(if ($sent) { 1 } else { 0 })"
+  }
+  foreach ($name in @($srcPrev.Keys)) {
+    if ($srcNow.Contains($name) -or (-not $srcPrev[$name].sent)) { continue }
+    # 恢复通知发不出去：先留着记录，下次再发
+    if (-not (Send-TGOk $tgToken $tgChat "🟢 公告来源恢复 · $name`n已经可以正常抓取。")) { $srcNext[$name] = '0|1' }
+  }
+  @($srcNext.GetEnumerator() | ForEach-Object { "$($_.Key)|$($_.Value)" }) | Out-File -FilePath $srcFile -Encoding UTF8
+  if ($srcNow.Count) { Write-Host "  公告来源：$($srcNow.Count) 个异常（$(@($srcNow.Keys) -join '、')）" -ForegroundColor DarkYellow }
 
   # ---- 每小时定时排查报告（北京时间每个整点一次）----
   # GitHub 定时触发不准时，整点没跑到也会在该小时内第一次运行时补发
@@ -1297,7 +1518,12 @@ if ($tgToken -and $tgChat) {
     $reportFile = Join-Path $ScriptDir 'lastreport.txt'
     $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = "$(Get-Content $reportFile -Encoding UTF8 -Raw)".Trim() }
     if ($slot -ne $lastSlot) {
-      $chainLine = if ($nowBad.Count -eq 0) { '五条链全部正常 ✅' } else { '⚠ 异常：' + ($nowBad -join '、') }
+      $chainParts = @()
+      if ($chainStall.Count) { $chainParts += '⚠ 出块异常：' + ($chainStall -join '、') }
+      if ($chainDown.Count)  { $chainParts += '节点连不上：' + ($chainDown -join '、') }
+      $chainLine = if ($chainParts.Count) { $chainParts -join '；' } else { '五条链全部正常 ✅' }
+      # 交易所公告没抓成功时，「0 条」不可信，要在报告里讲清楚
+      $cxLine = "$($toNotify.Count) 条" + $(if ($cxWarn) { "（⚠ $cxWarn，可能不完整）" } else { '' })
       $bankLine = '抓取失败 ⚠'; $aliLine = '抓取失败 ⚠'
       if ($bankData) {
         # 银行官网公告（部分服务可能受影响）不算「维护中」，另外注明
@@ -1311,16 +1537,18 @@ if ($tgToken -and $tgChat) {
         $aNow = @($bankData.alipay.events | Where-Object { $_ -and ([int64]$_.s -le $nowMs) -and ([int64]$_.e -ge $nowMs) })
         $aNew = @($bankData.alipay.notices | Where-Object { $_ -and (($nowMs - [int64]$_.pub) -le 3 * 86400000) })
         $aliLine = if ($aNow.Count) { '⚠ 维护中' } elseif ($aNew.Count) { "近3天公告 $($aNew.Count) 条" } else { '无维护公告 ✅' }
-        # 来源连不上时「无维护」不可信，要在报告里讲清楚
-        $failBank = @($bankData.sources | Where-Object { $_ -and (-not $_.ok) -and ($_.name -ne '支付宝开放平台') } | ForEach-Object { $_.name })
-        $failAli  = @($bankData.sources | Where-Object { $_ -and (-not $_.ok) -and ($_.name -eq '支付宝开放平台') })
-        if ($failBank.Count) { $bankLine += "（⚠ 来源连不上：$($failBank -join '、')）" }
-        if ($failAli.Count)  { $aliLine  += '（⚠ 公告来源连不上）' }
+        # 来源连不上、或内容读不出来时「无维护」不可信，要在报告里讲清楚
+        $failBank = @($bankData.sources | Where-Object { $_ -and ((-not $_.ok) -or $_.warn) -and ($_.name -ne '支付宝开放平台') } | ForEach-Object { $_.name })
+        $failAli  = @($bankData.sources | Where-Object { $_ -and ((-not $_.ok) -or $_.warn) -and ($_.name -eq '支付宝开放平台') })
+        if ($failBank.Count) { $bankLine += "（⚠ 来源异常：$($failBank -join '、')）" }
+        if ($failAli.Count)  { $aliLine  += '（⚠ 公告来源异常）' }
       }
-      $report = "📊 监控台 · 每小时排查`n$($bjNow.ToString('MM-dd HH:mm')) 北京`n———————`n链状态：$chainLine`nUSDT场外：买 ¥$okxBuy / 卖 ¥$okxSell`n近3天维护/暂停/升级：$($toNotify.Count) 条`n银行：$bankLine`n支付宝：$aliLine`n———————`nhttps://workschedule-netizen.github.io/crypto-monitor/"
-      Send-TG $tgToken $tgChat $report
-      $slot | Out-File -FilePath $reportFile -Encoding UTF8
-      Write-Host "  已发送每小时排查报告（$slot）" -ForegroundColor Cyan
+      $report = "📊 监控台 · 每小时排查`n$($bjNow.ToString('MM-dd HH:mm')) 北京`n———————`n链状态：$chainLine`nUSDT场外：买 ¥$okxBuy / 卖 ¥$okxSell`n近3天维护/暂停/升级：$cxLine`n银行：$bankLine`n支付宝：$aliLine`n———————`nhttps://workschedule-netizen.github.io/crypto-monitor/"
+      # 发成功才记下这个整点；发不出去的话，下次运行（约 5 分钟后）会再补发
+      if (Send-TGOk $tgToken $tgChat $report) {
+        $slot | Out-File -FilePath $reportFile -Encoding UTF8
+        Write-Host "  已发送每小时排查报告（$slot）" -ForegroundColor Cyan
+      } else { Write-Host "  每小时排查报告发送失败，下次运行再试" -ForegroundColor DarkYellow }
     }
   }
 }
