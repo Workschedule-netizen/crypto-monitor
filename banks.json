@@ -72,9 +72,7 @@
     "keep": "维护|維護|暂停|暫停|停机|停機|停止服务|不可用|不可使用|无法使用|无法交易|无法调用|系统升级|故障|异常|波动|中断",
     "drop": "小程序|生活号|审核|社区|二维码|沙箱|SDK|开发者|隐私|规范|规则|协议|活动",
     "gateways": [
-      { "n": "开放平台网关", "s": "收款 / 转账接口", "u": "https://openapi.alipay.com/gateway.do" },
       { "n": "移动支付网关", "s": "App 支付", "u": "https://mobilegw.alipay.com/mgw.htm" },
-      { "n": "网页收银台", "s": "网页付款", "u": "https://excashier.alipay.com/" },
       { "n": "支付宝官网", "s": "www.alipay.com", "u": "https://www.alipay.com/" }
     ]
   },
