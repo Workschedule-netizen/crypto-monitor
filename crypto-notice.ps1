@@ -56,22 +56,26 @@ $PushChains = @('TRON')
 # bt  = 大约几秒出一个块（网页用来判断「变慢 / 停摆」）
 # age = 超过多少秒没出新块，Telegram 就报异常
 $ChainDefs = @(
+  # publicnode 的节点从浏览器连经常 8 秒都没回应：排第一的话每一轮都要白等 8 秒才轮到下一个，所以一律排在最后当备用
   [ordered]@{ k='TRON'; n='TRON'; s='TRC20'; bt=3; age=180; nodes=@(
     [ordered]@{ t='tron'; u='https://api.trongrid.io/wallet/getnowblock' },
+    [ordered]@{ t='tron'; u='https://api.tronstack.io/wallet/getnowblock' },
+    [ordered]@{ t='tron'; u='https://tron.api.pocket.network/wallet/getnowblock' },
     [ordered]@{ t='tron'; u='https://tron-rpc.publicnode.com/wallet/getnowblock' }
   ) },
   [ordered]@{ k='BSC'; n='BSC'; s='BEP20'; bt=3; age=120; nodes=@(
-    [ordered]@{ t='evm'; u='https://bsc-rpc.publicnode.com' },
-    [ordered]@{ t='evm'; u='https://bsc-dataseed.bnbchain.org' }
+    [ordered]@{ t='evm'; u='https://bsc-dataseed.bnbchain.org' },
+    [ordered]@{ t='evm'; u='https://bsc.api.pocket.network' },
+    [ordered]@{ t='evm'; u='https://bsc-rpc.publicnode.com' }
   ) },
   [ordered]@{ k='ETH'; n='Ethereum'; s='ERC20'; bt=12; age=300; nodes=@(
-    [ordered]@{ t='evm'; u='https://ethereum-rpc.publicnode.com' },
-    [ordered]@{ t='evm'; u='https://eth.drpc.org' }
+    [ordered]@{ t='evm'; u='https://eth.drpc.org' },
+    [ordered]@{ t='evm'; u='https://eth.api.pocket.network' },
+    [ordered]@{ t='evm'; u='https://ethereum-rpc.publicnode.com' }
   ) },
   [ordered]@{ k='SOL'; n='Solana'; s='SPL'; bt=2; age=120; nodes=@(
     [ordered]@{ t='sol'; u='https://public.rpc.solanavibestation.com' },
     [ordered]@{ t='sol'; u='https://solana.api.pocket.network' },
-    # publicnode 的 Solana 节点从浏览器连经常要等 8 秒以上，所以排在后面当备用
     [ordered]@{ t='sol'; u='https://solana-rpc.publicnode.com' },
     [ordered]@{ t='sol'; u='https://api.mainnet-beta.solana.com'; web=$false },
     # tatum 免费版每分钟只能问 5 次，网页每 15 秒问一次会一直被拒绝，只留给脚本用
@@ -1062,11 +1066,12 @@ __ROWS__
     Promise.all(CHAINS.map(function(c){
       return fetchChain(c).then(function(d){failN[c.k]=0;var res=judge(c,d);last[c.k]=d.h;return {c:c,res:res};})
       // 节点偶尔会限流或没回应：第一次读不到先标黄重试，连续两次才算异常，避免误报
-      .catch(function(e){failN[c.k]=(failN[c.k]||0)+1;return {c:c,res:failN[c.k]>=2?{cls:'bad',status:'读取失败',meta:'节点连续无响应'}:{cls:'warn',status:'读取失败 · 重试中',meta:'节点暂时无响应'}};});
+      .catch(function(e){failN[c.k]=(failN[c.k]||0)+1;return {c:c,res:failN[c.k]>=2?{cls:'bad',status:'读取失败',meta:'节点连续无响应'}:{cls:'warn',status:'读取失败 · 重试中',meta:'节点暂时无响应'}};})
+      // 哪条链先读到就先显示，不用等最慢的那条
+      .then(function(x){renderCard(x.c,x.res);return x;});
     })).then(function(arr){
       var newlyBad=[],badNow=[];
       arr.forEach(function(x){
-        renderCard(x.c,x.res);
         if(x.res.cls==='bad'){ badNow.push(x.c.n); if(prevCls[x.c.k]!=='bad')newlyBad.push(x.c.n); }
         prevCls[x.c.k]=x.res.cls;
       });

@@ -23,13 +23,13 @@ function Get-Page($url, $timeout = 25) {
   $resp = Invoke-WebRequest -Uri $url -Headers @{ 'User-Agent'=$UA; 'Accept-Language'='zh-CN,zh;q=0.9' } -UseBasicParsing -TimeoutSec $timeout
   return [System.Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray())
 }
-# 银行官网从海外连偶尔会超时：失败再试一次
-function Get-PageRetry($url) {
-  try { return (Get-Page $url 15) }
+# 这些网站从海外连偶尔会超时：失败再试一次
+function Get-PageRetry($url, $timeout = 15) {
+  try { return (Get-Page $url $timeout) }
   catch {
     # 对方服务器太旧、握手被拒绝的，重试也没用，直接改用下面的放宽方式
     if ($IsLinux -and ((Ex-Chain $_.Exception) -match 'legacy renegotiation')) { return (Get-PageLegacyTls $url) }
-    Start-Sleep -Seconds 2; return (Get-Page $url 15)
+    Start-Sleep -Seconds 2; return (Get-Page $url $timeout)
   }
 }
 # 有些银行官网（例如建设银行）的服务器比较旧，不支持「安全重新协商」。
@@ -101,9 +101,10 @@ function Err-Text($e) {
 }
 
 # ============ 易宝支付：当前生效的公告列表 + 每条详情 ============
-$n = 0; $ok = $false; $warn = ''; $err = ''; $badFmt = 0
+$n = 0; $ok = $false; $warn = ''; $err = ''; $badFmt = 0; $detFail = 0
 try {
-  $list = Get-Page 'https://www.yeepay.com/all-notices'
+  # 易宝 / 快钱是「不可使用」类通知的主要来源：偶尔超时一次就整轮抓不到的话，正在维护的银行会有一轮被显示成正常，所以失败要再试一次
+  $list = Get-PageRetry 'https://www.yeepay.com/all-notices' 25
   $ok = $true
   $seen = @{}
   foreach ($a in [regex]::Matches($list, '(?s)href="/notice-detail/(\d+)"[^>]*>(.*?)</a>')) {
@@ -115,7 +116,7 @@ try {
     Start-Sleep -Milliseconds 300
     try {
       $url = "https://www.yeepay.com/notice-detail/$id"
-      $txt = Strip-Html (Get-Page $url)
+      $txt = Strip-Html (Get-PageRetry $url 25)
       $body = [regex]::Match($txt, '尊敬的客户(.+?)关于我们 公司介绍').Groups[1].Value
       $winRx = '(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}\s*--\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}'
       # 页面上明明有维护时间段，正文却切不出来：网页格式变了
@@ -135,11 +136,13 @@ try {
         Add-Event $bankName (To-Ms $g[1].Value $g[2].Value $g[3].Value $g[4].Value $g[5].Value) (To-Ms $g[6].Value $g[7].Value $g[8].Value $g[9].Value $g[10].Value) $sev $scope $title $url '易宝支付' $pub
         $n++
       }
-    } catch { Write-Host "    易宝公告 $id 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    } catch { $detFail++; Write-Host "    易宝公告 $id 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
   }
   # 这个列表平常一定有几条公告（声明、结算安排…），一条都抓不到就是列表页改版了
   if ($seen.Count -eq 0) { $warn = '公告列表抓到 0 条，网页格式可能已变' }
   elseif ($badFmt) { $warn = "$badFmt 条公告格式认不出，网页格式可能已变" }
+  # 列表抓到了、但有公告的正文打不开：这一轮可能漏掉维护通知，要显示出来而不是悄悄当成没有
+  elseif ($detFail) { $warn = "$detFail 条公告的正文抓不到，这一轮可能不完整" }
 } catch { $err = Err-Text $_.Exception; Write-Host "    易宝支付 抓取失败: $($_.Exception.Message)" -ForegroundColor DarkYellow }
 [void]$sources.Add([pscustomobject]@{ name = '易宝支付'; ok = $ok; count = $n; warn = $warn; err = $err })
 
@@ -147,7 +150,7 @@ try {
 $n = 0; $ok = $false; $warn = ''; $err = ''
 try {
   $url = 'https://help.99bill.com/index.php/%E5%BF%AB%E9%92%B1%E9%80%9A%E7%9F%A5/%E9%93%B6%E8%A1%8C%E9%A2%9D%E5%BA%A6%E8%B0%83%E6%95%B4%E9%80%9A%E7%9F%A5/2888-10%E6%9C%88%E6%9C%80%E6%96%B0%E9%93%B6%E8%A1%8C%E7%BB%B4%E6%8A%A4%E9%80%9A%E7%9F%A5.html'
-  $page = Get-Page $url
+  $page = Get-PageRetry $url 25
   $txt = Strip-Html $page
   $ok = $true
   $rx = '接\s*(.{2,20}?)\s*通知，银行方将于\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[:：](\d{2})\s*[-—~至]+\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[:：](\d{2})\s*进行系统维护，届时我司\s*(.+?)\s*将受到影响'
@@ -186,10 +189,15 @@ function Cut-Body($txt) {
 #   9月13日00:00至05:00　　9月12日22:00至9月13日06:00　　9月13日2:00-9月13日3:40
 #   2026年9月23日、11月24日、11月26日00:00～06:00（几个日期共用一个时段）
 #   9月15日22:00～次日00:00　　8月16日04:30至04:35以及05:00至05:10（同一天好几段）
+#   10月11日02:00——04:00（两个破折号）　　10月11日凌晨2:00至4:00　　10月11日0时至6时　　2时30分至5时
 function Get-Windows($text, [datetime]$pub) {
   $t = $text -replace '\s', '' -replace '：', ':' -replace '[～〜]', '~' -replace '（', '(' -replace '）', ')'
   $t = [regex]::Replace($t, '\((?:星期|周)[一二三四五六日天]\)', '')
-  $sep = '(?:至|到|-|—|–|~)'
+  # 「凌晨2:00」「上午8:00」：去掉钟点前面的字。下午 / 晚上 不动：那种写法可能是 12 小时制，认不准就宁可不收
+  $t = $t -replace '(?:凌晨|早上|上午)(?=\d{1,2}[:时点])', ''
+  # 「0时」「2时30分」「2点」→ 0:00 / 2:30 / 2:00（「24小时」这种数字后面不是紧接「时」的不会被动到）
+  $t = [regex]::Replace($t, '(?<!\d)(\d{1,2})[时点](?:(\d{1,2})分)?(?!\d)', { param($m) $m.Groups[1].Value + ':' + $(if ($m.Groups[2].Success) { $m.Groups[2].Value.PadLeft(2, '0') } else { '00' }) })
+  $sep = '(?:至|到|[-—–~]+)'
   $rx = "(?<dates>(?:(?:\d{4}年)?\d{1,2}月\d{1,2}日、?)+)(?<h1>\d{1,2}):(?<m1>\d{2})$sep(?:(?<next>次日)|(?:(?<y2>\d{4})年)?(?<mo2>\d{1,2})月(?<d2>\d{1,2})日)?(?<h2>\d{1,2}):(?<m2>\d{2})(?<more>(?:(?:、|以及|和|及)\d{1,2}:\d{2}$sep\d{1,2}:\d{2})*)"
   $raw = New-Object System.Collections.ArrayList
   foreach ($m in [regex]::Matches($t, $rx)) {
