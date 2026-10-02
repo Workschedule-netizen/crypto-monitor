@@ -710,6 +710,9 @@ $tpl = @'
   .btile.off i{background:var(--faint)}
   .btile.hide{display:none}
   .btile.idle i{background:var(--faint)}
+  /* 通道公告：群组里的原文照原样换行显示 */
+  .title.pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px}
+  .chtags{margin-top:7px;font-size:12px;color:var(--sub)}
   /* 通道侦测项目：一家供应商一行 */
   .chbox{border:1px solid var(--line);border-radius:10px;padding:2px 12px}
   .chrow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
@@ -918,11 +921,19 @@ __ROWS__
 <div class="section">
   <div class="sec-head">
     <div class="sec-title"><span class="bar" style="background:#1677ff"></span><h2>通道侦测项目</h2><span class="sub">按供应商分行 · 鼠标停在格子上看完整名称</span></div>
-    <span class="sec-meta">尚未接入侦测来源</span>
+    <span class="sec-meta">群组监听 <b id="chanupd">—</b></span>
   </div>
+  <div class="banner" id="chanbanner"></div>
   <div class="filters orgrow" id="chanFilters"></div>
   <div class="chbox" id="changroups"></div>
-  <div class="pboc-line" style="margin-top:10px">目前只列出名单，灰点表示还没有侦测来源，不代表通道正常或异常</div>
+  <div class="pboc-line" style="margin-top:10px">红点 = 上游群组通知维护 / 暂停 / 关闭 / 异常，绿点 = 已通知恢复 / 开启，灰点 = 还没收到过通知<br>状态由程序从群组的文字通知判断，可能有误，请以下方公告原文为准</div>
+</div>
+<div class="section">
+  <div class="sec-head">
+    <div class="sec-title"><span class="bar" style="background:var(--warn)"></span><h2>通道公告</h2><span class="sub">上游群组的维护 / 恢复 / 费率通知 · 最近 50 条</span></div>
+    <span class="sec-meta" id="channum"></span>
+  </div>
+  <div class="list" id="chanlist"></div>
 </div>
 <div class="section">
   <div class="sec-head">
@@ -1343,6 +1354,9 @@ __ROWS__
     else if(srcBad(['支付宝开放平台']).length){bn.className='banner has-warn';bn.textContent='支付宝公告来源异常，公告区可能不完整'+(gw?'；网关连线正常':'');setBadge('alipay','warn','来源异常');}
     else if(gw){bn.className='banner no-alert';bn.textContent='当前无维护公告，网关连线正常';setBadge('alipay','ok','正常');}
     else{bn.className='banner no-alert';bn.textContent='当前无维护公告，网关检测中…';}
+    // 支付宝本身没事、但有通道在维护时，分页徽章也要提示
+    var dn=chDown().length;
+    if(dn&&(state.alipay.cls===''||state.alipay.cls==='ok')) setBadge('alipay','warn',dn+' 个通道维护中');
     var order={now:0,soon:1,later:2,done:3};
     var html=ev.sort(function(a,b){return (order[a.st]-order[b.st])||(a.s-b.s);}).map(function(e){return eventCard(e,'ex-ali');}).join('');
     html+=nt.map(function(n){
@@ -1356,7 +1370,33 @@ __ROWS__
   document.getElementById('alireload').addEventListener('click',function(ev){ev.preventDefault();checkGateways();});
 
   // ====== 通道侦测项目：名单来自 banks.json 的 channels，内部 / 外部 用按钮切换，一家供应商一行 ======
-  // 目前还没有侦测来源，格子前面的状态点一律是灰色
+  // 状态来自 channel-status.json（群组监听程序写进仓库，键是商户号，没有商户号的用完整名称）：
+  // down = 群里通知维护 / 暂停，红点；up = 已通知恢复 / 开启，绿点；没有记录的是灰点
+  var CH={status:{},notices:[],updated:0},CHN={};
+  ((CFG.channels&&CFG.channels.groups)||[]).forEach(function(g){ g.providers.forEach(function(p){ p.items.forEach(function(c){ CHN[c.m||c.n]=c.n; }); }); });
+  function chName(k){ return CHN[k]||k; }
+  function chDown(){ return Object.keys(CH.status).filter(function(k){ return CH.status[k]&&CH.status[k].s==='down'; }); }
+  function loadChannels(){
+    fetch('channel-status.json?_='+Date.now(),{cache:'no-store'})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d&&d.status){ CH={status:d.status,notices:d.notices||[],updated:d.updated||0}; } })
+      .catch(function(){})
+      .then(function(){ renderChannels(); renderChanNotices(); renderAlipay(); });
+  }
+  function renderChanNotices(){
+    var nt=CH.notices.slice().sort(function(a,b){return b.t-a.t;}).slice(0,50),down=chDown();
+    var bn=document.getElementById('chanbanner');
+    if(down.length){bn.className='banner has-alert';bn.textContent=down.length+' 个通道维护 / 暂停中：'+down.map(chName).join('、');}
+    else if(CH.updated){bn.className='banner no-alert';bn.textContent='目前没有通道在维护';}
+    else{bn.className='banner no-alert';bn.textContent='还没有收到群组监听的数据';}
+    var LV={down:['alert','维护 / 暂停'],up:['resume','恢复 / 开启'],info:['info','公告']};
+    document.getElementById('chanlist').innerHTML=nt.map(function(n){
+      var lv=LV[n.s]||LV.info,tags=(n.m||[]).map(chName).join(' · ');
+      return '<div class="card lvl-'+lv[0]+'"><div class="row1"><span class="badge b-'+lv[0]+'">'+lv[1]+'</span><span class="src">'+esc(n.g||'')+'</span><span class="time">'+md(n.t)+' '+hm(n.t)+'</span></div><div class="title pre">'+esc(n.x||'')+'</div>'+(tags?'<div class="chtags">'+esc(tags)+'</div>':'')+'</div>';
+    }).join('')||'<div class="tl-empty" style="border-top:none">还没有通道公告</div>';
+    document.getElementById('chanupd').textContent=CH.updated?(md(CH.updated)+' '+hm(CH.updated)):'尚无数据';
+    document.getElementById('channum').textContent=nt.length?('共 '+nt.length+' 条'):'';
+  }
   var chF='in'; try{chF=localStorage.getItem('monitorChan')||'in';}catch(e){}
   function renderChannels(){
     var groups=(CFG.channels&&CFG.channels.groups)||[],bt=document.getElementById('chanFilters'),box=document.getElementById('changroups');
@@ -1374,8 +1414,11 @@ __ROWS__
       var tiles='';
       // s 是去掉供应商前缀的短名，n 是完整名称（放在悬停提示里），m 是商户号（括号显示在名称后面）
       p.items.forEach(function(c){
-        var tip=c.n+(c.m?'（商户号 '+c.m+'）':'')+' ｜ 尚未接入侦测';
-        tiles+='<div class="btile idle" title="'+esc(tip)+'"><i></i><span>'+esc(c.s||c.n)+(c.m?'<small class="mid">（'+esc(c.m)+'）</small>':'')+'</span></div>';
+        var s=CH.status[c.m||c.n],cls='idle',txt='还没收到过通知';
+        if(s&&s.s==='down'){cls='bad';txt='维护 / 暂停中';}
+        else if(s&&s.s==='up'){cls='';txt='已通知恢复 / 开启';}
+        var tip=c.n+(c.m?'（商户号 '+c.m+'）':'')+' ｜ '+txt+(s?' ｜ '+md(s.t)+' '+hm(s.t)+' '+(s.g||'')+'：'+(s.x||''):'');
+        tiles+='<div class="btile '+cls+'" title="'+esc(tip)+'"><i></i><span>'+esc(c.s||c.n)+(c.m?'<small class="mid">（'+esc(c.m)+'）</small>':'')+'</span></div>';
       });
       html+='<div class="chrow'+(p.wide?' wide':'')+'"><div class="chprov" title="'+esc(p.p)+'">'+esc(p.p)+'<span>'+p.items.length+'</span></div><div class="chitems">'+tiles+'</div></div>';
     });
@@ -1384,8 +1427,8 @@ __ROWS__
 
   var saved=null; try{saved=localStorage.getItem('monitorView');}catch(e){}
   show(location.hash.slice(1)||saved||'crypto');
-  renderBank(); renderChannels(); renderAlipay(); checkGateways();
-  setInterval(function(){renderBank();checkGateways();},60000);
+  renderBank(); renderChannels(); renderChanNotices(); renderAlipay(); checkGateways(); loadChannels();
+  setInterval(function(){renderBank();checkGateways();loadChannels();},60000);
   window.addEventListener('resize',renderBank);
 })();
 </script>
