@@ -102,10 +102,21 @@ def keyword_hits(text, keywords, questions):
     return hit
 
 
+def ignore_rules(cfg):
+    """ignore_keywords（照字面比对）和 ignore_patterns（正则）合成一组，命中任何一个就整条不推送。"""
+    rules = [re.compile(re.escape(k), re.IGNORECASE) for k in clean_list(cfg.get('ignore_keywords'))]
+    for p in clean_list(cfg.get('ignore_patterns')):
+        try:
+            rules.append(re.compile(p, re.IGNORECASE))
+        except re.error as e:
+            sys.exit(f'config.json 的 ignore_patterns 写法有误：{p}（{e}）')
+    return rules
+
+
 def what_to_push(text, keywords, chase, ignore, questions, ours, foreign):
     """这条消息要推送的话回传 (命中的关键词, 推送内容, 是不是追款)，不用推送回传 None。"""
     low = text.lower()
-    if any(k in low for k in ignore):
+    if any(r.search(text) for r in ignore):
         return None
     hit = [k for k in chase if k in low]
     if hit:
@@ -218,7 +229,7 @@ async def main():
     token = str(cfg.get('bot_token', '')).strip()
     push_to = clean_list(cfg.get('push_to'))
     keywords = [k.lower() for k in clean_list(cfg.get('keywords'))]
-    ignore = [k.lower() for k in clean_list(cfg.get('ignore_keywords'))]
+    ignore = ignore_rules(cfg)
     chase = [k.lower() for k in clean_list(cfg.get('chase_keywords'))]
     questions = [q.lower() for q in clean_list(cfg.get('question_words', QUESTION_WORDS))]
     channels = clean_list(cfg.get('our_channels'))   # {代号: 名称}，只用到代号
