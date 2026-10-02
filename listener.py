@@ -7,6 +7,7 @@
 
 config.json 的 our_channels 有填的话：消息提到我方通道代号，只推送跟我方通道有关的那几行；
 完全没写代号的通知整条照推；只写了别家代号的不推送。问句（「维护了吗」）一律不推送。
+chase_keywords（追款、误补上分这类）不受上面的规则限制，出现就整条原样推送。
 
 设定都在同一个文件夹的 config.json。第一次运行会要求输入手机号和验证码，
 登录后会产生 listener.session，那个文件等于账号的登录凭证，不要外传、不要上传。
@@ -101,17 +102,24 @@ def keyword_hits(text, keywords, questions):
     return hit
 
 
-def what_to_push(text, keywords, ignore, questions, ours, foreign):
-    """这条消息要推送的话回传 (命中的关键词, 推送内容)，不用推送回传 None。"""
+def what_to_push(text, keywords, chase, ignore, questions, ours, foreign):
+    """这条消息要推送的话回传 (命中的关键词, 推送内容, 是不是追款)，不用推送回传 None。"""
+    low = text.lower()
+    if any(k in low for k in ignore):
+        return None
+    hit = [k for k in chase if k in low]
+    if hit:
+        # 追款漏掉会赔钱：问句也推、不看通道代号，整条原样推送（订单号、金额都要留着）
+        return hit, text, True
     hit = keyword_hits(text, keywords, questions)
-    if not hit or any(k in text.lower() for k in ignore):
+    if not hit:
         return None
     if ours or foreign:
         text, found, dropped = only_ours(text, ours, foreign)
         # 提到我方通道 → 推送筛过的内容；完全没写代号 → 整条照推；只写了别家代号 → 不推送
         if dropped and not found:
             return None
-    return hit, text
+    return hit, text, False
 
 
 def load_config():
@@ -211,6 +219,7 @@ async def main():
     push_to = clean_list(cfg.get('push_to'))
     keywords = [k.lower() for k in clean_list(cfg.get('keywords'))]
     ignore = [k.lower() for k in clean_list(cfg.get('ignore_keywords'))]
+    chase = [k.lower() for k in clean_list(cfg.get('chase_keywords'))]
     questions = [q.lower() for q in clean_list(cfg.get('question_words', QUESTION_WORDS))]
     channels = clean_list(cfg.get('our_channels'))   # {代号: 名称}，只用到代号
     scoped = {k: clean_list(v) for k, v in (cfg.get('channel_only_in') or {}).items()}
@@ -235,10 +244,10 @@ async def main():
     async def on_message(event):
         try:
             ours, foreign = patterns.get(event.chat_id, (None, None))
-            picked = what_to_push(event.raw_text or '', keywords, ignore, questions, ours, foreign)
+            picked = what_to_push(event.raw_text or '', keywords, chase, ignore, questions, ours, foreign)
             if not picked:
                 return
-            hit, text = picked
+            hit, text, is_chase = picked
             if bot_id and event.sender_id == bot_id:
                 return
             try:
@@ -249,7 +258,8 @@ async def main():
             name = groups.get(event.chat_id, str(event.chat_id))
             when = event.date.astimezone(BJ).strftime('%m-%d %H:%M:%S')
             body = text if len(text) <= 1500 else text[:1500] + '…'
-            msg = (f'🔔 群组通知 · {name}\n发送人：{who}\n'
+            title = '🚨 追款提醒' if is_chase else '🔔 群组通知'
+            msg = (f'{title} · {name}\n发送人：{who}\n'
                    f'时间：{when}（北京）\n———————\n{body}')
             loop = asyncio.get_running_loop()
             results = await asyncio.gather(*[loop.run_in_executor(None, send_push, token, p, msg) for p in push_to])
@@ -260,6 +270,8 @@ async def main():
 
     log(f'开始监听 {len(groups)} 个群组：' + '、'.join(groups.values()))
     log('关键词：' + '、'.join(keywords))
+    if chase:
+        log('追款关键词（整条原样推送）：' + '、'.join(chase))
     if channels:
         log(f'我方通道代号 {len(channels)} 个：提到的只推送相关的行，只写了别家代号的不推送')
     await client.run_until_disconnected()
