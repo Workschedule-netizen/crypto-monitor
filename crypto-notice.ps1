@@ -551,6 +551,10 @@ $tpl = @'
   #sysStatus.bad{color:var(--alert);border-color:rgba(234,57,67,.5);background:rgba(234,57,67,.1)}
   .refresh{background:var(--txt);color:var(--ink);border:none;border-radius:6px;padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
   .refresh:hover{opacity:.85}
+  /* 右上角的「每小时报时」开关 */
+  .hourly{font-family:var(--mono);font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:6px;border:1px solid rgba(22,199,132,.4);color:var(--resume);background:rgba(22,199,132,.07);text-decoration:none;cursor:pointer;white-space:nowrap}
+  .hourly.off{color:var(--sub);border-color:var(--line2);background:none}
+  .hourly:hover{opacity:.85}
   .section{margin-bottom:22px}
   .sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
   .sec-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -770,6 +774,7 @@ $tpl = @'
   </div>
   <div class="head-right">
     <span id="sysStatus">连接中…</span>
+    <a class="hourly" href="#" id="hourlyToggle">每小时报时：…</a>
     <a class="refresh" href="#" onclick="location.reload();return false;">刷新页面</a>
   </div>
 </header>
@@ -1431,6 +1436,55 @@ __ROWS__
   setInterval(function(){renderBank();checkGateways();loadChannels();},60000);
   window.addEventListener('resize',renderBank);
 })();
+
+// ====== 每小时报时开关：状态存在仓库的 settings.json，抓取脚本每次运行都会读 ======
+// 改开关等于改仓库里的文件，所以第一次点会要一组对这个仓库有写入权限的 GitHub token，只存在这台浏览器里
+(function(){
+  var FILE='settings.json',API='https://api.github.com/repos/Workschedule-netizen/crypto-monitor/contents/'+FILE;
+  var el=document.getElementById('hourlyToggle'),on=true,busy=false;
+  function show(){
+    el.textContent='每小时报时：'+(busy?'保存中…':(on?'开':'关'));
+    el.className='hourly'+(on?'':' off');
+    el.title=on?'点一下关闭每小时的排查报告':'点一下重新打开每小时的排查报告';
+  }
+  // 刚改完的几分钟内网页上的 settings.json 还是旧的，这段时间以这台浏览器记下的为准
+  function pending(){ try{var p=JSON.parse(localStorage.getItem('monitorHourly')||'null'); if(p&&Date.now()-p.t<600000)return p;}catch(e){} return null; }
+  fetch(FILE+'?_='+Date.now(),{cache:'no-store'})
+    .then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; })
+    .then(function(s){ var p=pending(); on=p?p.v:(s.hourly_report!==false); show(); });
+  el.addEventListener('click',function(ev){
+    ev.preventDefault(); if(busy)return;
+    var tok=''; try{tok=localStorage.getItem('monitorGhToken')||'';}catch(e){}
+    if(!tok){
+      tok=(prompt('要改这个开关，需要一组对 crypto-monitor 仓库有写入权限（Contents: Read and write）的 GitHub token。\n只会存在这台浏览器里，之后不用再输入。')||'').trim();
+      if(!tok)return;
+    }
+    var want=!on,H={'Authorization':'Bearer '+tok,'Accept':'application/vnd.github+json'};
+    busy=true; show();
+    fetch(API+'?ref=main&_='+Date.now(),{headers:H,cache:'no-store'})
+      .then(function(r){ if(r.status===404)return null; if(!r.ok)throw r.status; return r.json(); })
+      .then(function(cur){
+        var s={}; if(cur){ try{ s=JSON.parse(decodeURIComponent(escape(atob(cur.content.replace(/\n/g,''))))); }catch(e){ s={}; } }
+        s.hourly_report=want;
+        var body={message:'hourly report '+(want?'on':'off'),branch:'main',content:btoa(unescape(encodeURIComponent(JSON.stringify(s,null,1)+'\n')))};
+        if(cur)body.sha=cur.sha;
+        return fetch(API,{method:'PUT',headers:H,body:JSON.stringify(body)});
+      })
+      .then(function(r){
+        if(!r.ok)throw r.status;
+        on=want;
+        try{ localStorage.setItem('monitorGhToken',tok); localStorage.setItem('monitorHourly',JSON.stringify({v:want,t:Date.now()})); }catch(e){}
+      })
+      .catch(function(code){
+        if(code===401||code===403||code===404){
+          try{localStorage.removeItem('monitorGhToken');}catch(e){}
+          alert('没改成功：token 不对、过期，或没有这个仓库的写入权限（HTTP '+code+'）。再点一次可以重新输入。');
+        } else alert('没改成功，请稍后再试（'+code+'）');
+      })
+      .then(function(){ busy=false; show(); });
+  });
+  show();
+})();
 </script>
 </body>
 </html>
@@ -1617,7 +1671,17 @@ if ($tgToken -and $tgChat) {
   # GitHub 定时触发不准时，整点没跑到也会在该小时内第一次运行时补发
   $bjNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(8))
   $slot = $bjNow.ToString('yyyy-MM-dd-HH')
-  if ($slot) {
+  # 网页右上角的「每小时报时」开关写在 settings.json。关掉时不发、也不记整点；文件不存在或读不出来就当作开着
+  $hourlyOn = $true
+  try {
+    $setFile = Join-Path $ScriptDir 'settings.json'
+    if (Test-Path $setFile) {
+      $settings = Get-Content $setFile -Encoding UTF8 -Raw | ConvertFrom-Json
+      if ($settings.hourly_report -eq $false) { $hourlyOn = $false }
+    }
+  } catch {}
+  if (-not $hourlyOn) { Write-Host '  每小时排查报告已在网页上关闭，这次不发' -ForegroundColor DarkYellow }
+  if ($slot -and $hourlyOn) {
     $reportFile = Join-Path $ScriptDir 'lastreport.txt'
     $lastSlot = ''; if (Test-Path $reportFile) { $lastSlot = "$(Get-Content $reportFile -Encoding UTF8 -Raw)".Trim() }
     if ($slot -ne $lastSlot) {
