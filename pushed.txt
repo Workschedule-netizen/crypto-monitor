@@ -3,3 +3,4 @@ bank-start|甘肃农信|1790776800000|1790812800000
 bank-end|甘肃农信|1790776800000|1790812800000
 bank-official|https://www.citicbank.com/common/servicenotice/202609/t20260930_311851.html
 bank-official|https://www.cmbchina.com/main/noticeinfo.aspx?guid=cea525f1-8f01-4c12-a18b-c851d929dcf4
+bank-w7|中信银行|1791648000000|1791669600000
