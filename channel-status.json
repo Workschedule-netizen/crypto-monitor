@@ -1,5 +1,5 @@
 {
- "updated": 1791144116000,
+ "updated": 1791156302000,
  "status": {
   "10065": {
    "s": "up",
@@ -60,9 +60,38 @@
    "t": 1791144116000,
    "g": "和奕支付宝查单群（2025/08/25）",
    "x": "亲，今日车队工作时间已到，请帮忙关闭进货通道，早上9点营运时间再通知开启通道，谢谢"
+  },
+  "MXT8R7E8B9": {
+   "s": "up",
+   "t": 1791156302000,
+   "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
+   "x": "实名卡卡通道开启 2000-50000\n区间顺畅 ，可多多安排订单\nThe smooth range of bank card is 2000-50000.\nYou can schedule more orders."
+  },
+  "MYV6TFDTHE": {
+   "s": "up",
+   "t": 1791156302000,
+   "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
+   "x": "实名卡卡通道开启 2000-50000\n区间顺畅 ，可多多安排订单\nThe smooth range of bank card is 2000-50000.\nYou can schedule more orders."
+  },
+  "MP3DOXC1KX": {
+   "s": "up",
+   "t": 1791156302000,
+   "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
+   "x": "实名卡卡通道开启 2000-50000\n区间顺畅 ，可多多安排订单\nThe smooth range of bank card is 2000-50000.\nYou can schedule more orders."
   }
  },
  "notices": [
+  {
+   "t": 1791156302000,
+   "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
+   "s": "up",
+   "x": "实名卡卡通道开启 2000-50000\n区间顺畅 ，可多多安排订单\nThe smooth range of bank card is 2000-50000.\nYou can schedule more orders.",
+   "m": [
+    "MXT8R7E8B9",
+    "MYV6TFDTHE",
+    "MP3DOXC1KX"
+   ]
+  },
   {
    "t": 1791144116000,
    "g": "和奕支付宝查单群（2025/08/25）",
