@@ -1,5 +1,5 @@
 {
- "updated": 1791156302000,
+ "updated": 1791161575000,
  "status": {
   "10065": {
    "s": "up",
@@ -78,9 +78,38 @@
    "t": 1791156302000,
    "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
    "x": "实名卡卡通道开启 2000-50000\n区间顺畅 ，可多多安排订单\nThe smooth range of bank card is 2000-50000.\nYou can schedule more orders."
+  },
+  "DDWHC01": {
+   "s": "down",
+   "t": 1791161575000,
+   "g": "DD/UU查单群－WFPAY卡卡",
+   "x": "/异常 L20261005082243840437734 重复支付"
+  },
+  "Fourwfwechat": {
+   "s": "down",
+   "t": 1791161575000,
+   "g": "DD/UU查单群－WFPAY卡卡",
+   "x": "/异常 L20261005082243840437734 重复支付"
+  },
+  "Fourwfalipay": {
+   "s": "down",
+   "t": 1791161575000,
+   "g": "DD/UU查单群－WFPAY卡卡",
+   "x": "/异常 L20261005082243840437734 重复支付"
   }
  },
  "notices": [
+  {
+   "t": 1791161575000,
+   "g": "DD/UU查单群－WFPAY卡卡",
+   "s": "down",
+   "x": "/异常 L20261005082243840437734 重复支付",
+   "m": [
+    "DDWHC01",
+    "Fourwfwechat",
+    "Fourwfalipay"
+   ]
+  },
   {
    "t": 1791156302000,
    "g": "码上-QOO/HOO/nieniepay/fouuor6688 代收付-查单(实名支付宝/卡卡)押金五万",
