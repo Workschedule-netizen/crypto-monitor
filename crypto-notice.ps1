@@ -551,10 +551,50 @@ $tpl = @'
   #sysStatus.bad{color:var(--alert);border-color:rgba(234,57,67,.5);background:rgba(234,57,67,.1)}
   .refresh{background:var(--txt);color:var(--ink);border:none;border-radius:6px;padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
   .refresh:hover{opacity:.85}
-  /* 右上角的「每小时报时」开关 */
-  .hourly{font-family:var(--mono);font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:6px;border:1px solid rgba(22,199,132,.4);color:var(--resume);background:rgba(22,199,132,.07);text-decoration:none;cursor:pointer;white-space:nowrap}
-  .hourly.off{color:var(--sub);border-color:var(--line2);background:none}
+  /* 右上角的「每小时报时」气泡开关：绿色、圆点在右 = 开；白色、圆点在左 = 关 */
+  .hourly{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:13px;font-weight:700;padding:4px 5px 4px 13px;border-radius:999px;border:1px solid rgba(22,199,132,.75);color:#3ddc97;background:rgba(22,199,132,.16);box-shadow:0 0 14px rgba(22,199,132,.22);text-decoration:none;cursor:pointer;white-space:nowrap;user-select:none;-webkit-tap-highlight-color:transparent}
+  .hourly.off{color:var(--txt);border-color:rgba(233,238,244,.6);background:rgba(233,238,244,.08);box-shadow:0 0 14px rgba(233,238,244,.1)}
   .hourly:hover{opacity:.85}
+  .hourly:focus-visible{outline:2px solid var(--resume);outline-offset:2px}
+  .hourly .sw{position:relative;flex:none;width:36px;height:20px;border-radius:999px;background:var(--resume)}
+  .hourly .sw i{position:absolute;top:2px;left:18px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  .hourly.off .sw{background:rgba(233,238,244,.28)}
+  .hourly.off .sw i{left:2px;background:#fff}
+  .hourly.ready .sw{transition:background .2s}
+  .hourly.ready .sw i{transition:left .2s,background .2s}
+  .hourly.busy{opacity:.6;cursor:progress}
+  /* 网页自己的对话框 / 底部提示条（取代浏览器自带的 prompt / alert 灰色弹窗） */
+  .dlg-mask{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(4,7,11,.72);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:dlgFade .15s ease-out}
+  .dlg{width:100%;max-width:420px;background:var(--card);border:1px solid var(--line2);border-radius:12px;padding:20px 20px 16px;box-shadow:0 24px 64px rgba(0,0,0,.6);animation:dlgPop .18s ease-out}
+  .dlg h3{font-size:15px;font-weight:700;margin-bottom:8px}
+  .dlg p{font-size:13px;color:var(--sub);line-height:1.65}
+  .dlg input{width:100%;margin-top:14px;padding:10px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--ink);color:var(--txt);font-family:var(--mono);font-size:13px;outline:none}
+  .dlg input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,155,255,.18)}
+  .dlg-err{min-height:18px;margin-top:8px;font-size:12px;color:var(--alert)}
+  .dlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+  .dlg button{font-family:var(--sans);font-size:13px;font-weight:700;padding:8px 16px;border-radius:7px;cursor:pointer;border:1px solid var(--line2);background:none;color:var(--sub)}
+  .dlg button:hover{color:var(--txt);border-color:var(--faint)}
+  .dlg button.pri{background:var(--txt);color:var(--ink);border-color:var(--txt)}
+  .dlg button.pri:hover{opacity:.85;color:var(--ink)}
+  .dlg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .toast{position:fixed;left:50%;bottom:28px;z-index:210;transform:translate(-50%,12px);opacity:0;max-width:calc(100vw - 32px);padding:11px 16px;border-radius:9px;font-size:13px;font-weight:600;background:var(--card2);border:1px solid var(--line2);color:var(--txt);box-shadow:0 12px 36px rgba(0,0,0,.5);transition:opacity .2s,transform .2s;pointer-events:none}
+  .toast::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:9px;vertical-align:1px;background:var(--sub)}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.ok{border-color:rgba(22,199,132,.45)}
+  .toast.ok::before{background:var(--resume)}
+  .toast.bad{border-color:rgba(234,57,67,.55);color:#ffb3b8}
+  .toast.bad::before{background:var(--alert)}
+  @keyframes dlgFade{from{opacity:0}}
+  @keyframes dlgPop{from{opacity:0;transform:translateY(8px) scale(.98)}}
+  /* 网页自己的提示框（取代浏览器自带的 title 小白框）：鼠标移上去立刻显示，手机点一下格子显示 */
+  #tip{position:absolute;left:0;top:0;z-index:150;max-width:min(340px,calc(100vw - 16px));padding:9px 12px;border-radius:9px;background:#1a2430;border:1px solid var(--line2);box-shadow:0 12px 32px rgba(0,0,0,.55);font-size:12.5px;line-height:1.55;color:var(--sub);white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .1s,transform .1s}
+  #tip.show{opacity:1;transform:none}
+  #tip b{display:block;color:var(--txt);font-weight:700;font-size:13px;margin-bottom:2px}
+  #tip .tip-link{margin-top:5px;color:var(--accent);font-weight:600}
+  #tip::after{content:"";position:absolute;left:var(--ax,50%);width:8px;height:8px;background:#1a2430;border:1px solid var(--line2);transform:translateX(-50%) rotate(45deg)}
+  #tip.up::after{bottom:-5px;border-top:none;border-left:none}
+  #tip.down::after{top:-5px;border-bottom:none;border-right:none}
+  @media(hover:none){[data-tip]{cursor:pointer}}
   .section{margin-bottom:22px}
   .sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
   .sec-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -774,7 +814,7 @@ $tpl = @'
   </div>
   <div class="head-right">
     <span id="sysStatus">连接中…</span>
-    <a class="hourly" href="#" id="hourlyToggle">每小时报时：…</a>
+    <a class="hourly" href="#" id="hourlyToggle" role="switch" aria-checked="true"><span id="hourlyTxt">每小时报时</span><span class="sw"><i></i></span></a>
     <a class="refresh" href="#" onclick="location.reload();return false;">刷新页面</a>
   </div>
 </header>
@@ -926,13 +966,13 @@ __ROWS__
 </div>
 <div class="section">
   <div class="sec-head">
-    <div class="sec-title"><span class="bar" style="background:#1677ff"></span><h2>通道侦测项目</h2><span class="sub">按供应商分行 · 鼠标停在格子上看完整名称</span></div>
+    <div class="sec-title"><span class="bar" style="background:#1677ff"></span><h2>通道侦测项目</h2><span class="sub">按供应商分行 · 鼠标停在格子上（手机点一下）看完整名称</span></div>
     <span class="sec-meta">群组监听 <b id="chanupd">—</b></span>
   </div>
   <div class="banner" id="chanbanner"></div>
   <div class="filters orgrow" id="chanFilters"></div>
   <div class="chbox" id="changroups"></div>
-  <div class="pboc-line" style="margin-top:10px">红点 = 上游群组通知维护 / 暂停 / 关闭 / 异常，绿点 = 已通知恢复 / 开启，灰点 = 还没收到过通知<br>状态由程序从群组的文字通知判断，可能有误；鼠标停在格子上可以看最后一则通知的原文</div>
+  <div class="pboc-line" style="margin-top:10px">红点 = 上游群组通知维护 / 暂停 / 关闭 / 异常，绿点 = 已通知恢复 / 开启，灰点 = 还没收到过通知<br>状态由程序从群组的文字通知判断，可能有误；鼠标停在格子上（手机点一下格子）可以看最后一则通知的原文</div>
 </div>
 <div class="section">
   <div class="sec-head">
@@ -1270,8 +1310,8 @@ __ROWS__
         var hide=q&&(b.s+b.n).indexOf(q)<0;
         // 有官网网址（banks.json 的 u）的银行可以点开官网，没填的维持不能点
         var cls='btile '+(s.kind==='ok'?'':s.cls)+(hide?' hide':''),tip=esc(b.n+' ｜ '+s.txt+' ｜ '+s.meta);
-        tiles+=b.u?('<a class="'+cls+'" href="'+esc(b.u)+'" target="_blank" rel="noopener" title="'+tip+' ｜ 点击打开官网"><i></i><span>'+b.s+'</span></a>')
-                  :('<div class="'+cls+'" title="'+tip+'"><i></i><span>'+b.s+'</span></div>');
+        tiles+=b.u?('<a class="'+cls+'" href="'+esc(b.u)+'" target="_blank" rel="noopener" data-tip="'+tip+'"><i></i><span>'+b.s+'</span></a>')
+                  :('<div class="'+cls+'" data-tip="'+tip+'"><i></i><span>'+b.s+'</span></div>');
       });
       groups+='<div class="bgroup"><div class="bgroup-h">'+g.name+'<span>'+g.banks.length+' 家</span></div><div class="btiles">'+tiles+'</div></div>';
     });
@@ -1298,7 +1338,7 @@ __ROWS__
       var bars='';
       inRange.filter(function(e){return e.bank===nm;}).forEach(function(e){
         var l=Math.max(0,(e.s-A)/SPAN*100),r=Math.min(100,(e.e-A)/SPAN*100);
-        bars+='<div class="tl-bar '+e.st+(isPart(e)?' partial':'')+'" style="left:'+l+'%;width:'+(r-l)+'%" title="'+esc(nm+' '+win(e)+' ｜ '+e.scope)+'"></div>';
+        bars+='<div class="tl-bar '+e.st+(isPart(e)?' partial':'')+'" style="left:'+l+'%;width:'+(r-l)+'%" data-tip="'+esc(nm+' '+win(e)+' ｜ '+e.scope)+'"></div>';
       });
       rows+='<div class="tl-row"><div class="tl-name">'+nm+'</div><div class="tl-track">'+bars+'</div></div>';
     });
@@ -1436,9 +1476,9 @@ __ROWS__
         if(s&&s.s==='down'){cls='bad';txt='维护 / 暂停中';}
         else if(s&&s.s==='up'){cls='';txt='已通知恢复 / 开启';}
         var tip=c.n+(c.m?'（商户号 '+c.m+'）':'')+' ｜ '+txt+(s?' ｜ '+md(s.t)+' '+hm(s.t)+' '+(s.g||'')+'：'+(s.x||''):'');
-        tiles+='<div class="btile '+cls+'" title="'+esc(tip)+'"><i></i><span>'+esc(c.s||c.n)+(c.m?'<small class="mid">（'+esc(c.m)+'）</small>':'')+'</span></div>';
+        tiles+='<div class="btile '+cls+'" data-tip="'+esc(tip)+'"><i></i><span>'+esc(c.s||c.n)+(c.m?'<small class="mid">（'+esc(c.m)+'）</small>':'')+'</span></div>';
       });
-      html+='<div class="chrow'+(p.wide?' wide':'')+'"><div class="chprov" title="'+esc(p.p)+'">'+esc(p.p)+'<span>'+p.items.length+'</span></div><div class="chitems">'+tiles+'</div></div>';
+      html+='<div class="chrow'+(p.wide?' wide':'')+'"><div class="chprov" data-tip="'+esc(p.p)+'">'+esc(p.p)+'<span>'+p.items.length+'</span></div><div class="chitems">'+tiles+'</div></div>';
     });
     box.innerHTML=html;
   }
@@ -1450,28 +1490,112 @@ __ROWS__
   window.addEventListener('resize',renderBank);
 })();
 
+// ====== 网页自己的提示框：取代浏览器自带的 title 小白框 ======
+// 鼠标移上去立刻显示；手机 / 平板点一下格子显示，再点一次（或点别的地方）收起；有官网的银行格子，手机上点第二次才打开官网
+// 内容写在元素的 data-tip，用「 ｜ 」分段：第一段是名称（粗体），第二段是状态，后面是细节
+(function(){
+  var tip=null,anchor=null,lastType='mouse';
+  function h(s){ return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function hide(){ if(tip)tip.className=''; anchor=null; }
+  function show(el,touch){
+    var text=el.getAttribute('data-tip'); if(!text){ hide(); return; }
+    if(!tip){ tip=document.createElement('div'); tip.id='tip'; tip.setAttribute('role','tooltip'); document.body.appendChild(tip); }
+    var seg=text.split(' ｜ '),cl=el.classList,st='';
+    if(cl.contains('btile')) st=cl.contains('bad')?'#ff8a8f':cl.contains('warn')?'#f5c26b':(cl.contains('idle')||cl.contains('off'))?'':'var(--resume)';
+    var html='<b>'+h(seg[0])+'</b>';
+    for(var i=1;i<seg.length;i++){ var s=seg[i]; if(s.length>400)s=s.slice(0,400)+'…'; html+='<div'+(i===1&&st?' style="color:'+st+'"':'')+'>'+h(s)+'</div>'; }
+    if(el.tagName==='A'&&el.target==='_blank') html+='<div class="tip-link">'+(touch?'再点一次打开官网 ↗':'点击打开官网 ↗')+'</div>';
+    tip.innerHTML=html; anchor=el;
+    // 先量提示框多大，再决定放格子上面还是下面（上面放不下就放下面），左右不超出画面
+    tip.className=''; tip.style.left='0px'; tip.style.top='0px';
+    var r=el.getBoundingClientRect(),w=tip.offsetWidth,ht=tip.offsetHeight,vw=document.documentElement.clientWidth;
+    var cx=r.left+r.width/2,x=Math.max(8,Math.min(vw-8-w,cx-w/2)),up=r.top-ht-10>=8,y=up?r.top-ht-9:r.bottom+9;
+    tip.style.left=(x+window.pageXOffset)+'px'; tip.style.top=(y+window.pageYOffset)+'px';
+    tip.style.setProperty('--ax',Math.max(12,Math.min(w-12,cx-x))+'px');
+    tip.className=(up?'up':'down')+' show';
+  }
+  function target(e){ return e.target&&e.target.closest?e.target.closest('[data-tip]'):null; }
+  document.addEventListener('pointerdown',function(e){ lastType=e.pointerType||'mouse'; },true);
+  document.addEventListener('pointerover',function(e){
+    if(e.pointerType!=='mouse')return;
+    var el=target(e);
+    if(el){ if(el!==anchor)show(el,false); } else if(anchor) hide();
+  });
+  document.addEventListener('pointerout',function(e){ if(e.pointerType==='mouse'&&!e.relatedTarget)hide(); });
+  document.addEventListener('click',function(e){
+    var el=target(e),sw=el&&el.getAttribute('role')==='switch';
+    if(lastType==='mouse'){ if(sw)hide(); return; }
+    if(!el||sw){ hide(); return; }
+    if(el===anchor){ hide(); return; }              // 同一格再点一次：收起（有官网的就照常打开官网）
+    if(el.tagName==='A'&&el.target==='_blank')e.preventDefault();   // 第一次点有官网的格子：先看提示，不跳走
+    show(el,true);
+  },true);
+  document.addEventListener('focusin',function(e){ var el=target(e); try{ if(el&&el.matches(':focus-visible'))show(el,false); }catch(x){} });
+  document.addEventListener('focusout',function(e){ if(anchor&&anchor===e.target)hide(); });
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape')hide(); });
+  window.addEventListener('resize',hide);
+  // 每分钟自动刷新会把格子换掉、切分页会把格子藏起来：原来的格子不见了，提示也跟着收起
+  setInterval(function(){ if(anchor&&(!document.body.contains(anchor)||!anchor.getClientRects().length))hide(); },800);
+})();
+
+// ====== 网页自己的对话框和底部提示条：不用浏览器自带的 prompt / alert（那种灰色弹窗跟页面不搭） ======
+function uiToast(msg,kind){
+  var t=document.getElementById('toast');
+  if(!t){ t=document.createElement('div'); t.id='toast'; t.setAttribute('role','status'); document.body.appendChild(t); }
+  t.textContent=msg; t.className='toast '+(kind||''); void t.offsetWidth; t.className+=' show';
+  clearTimeout(uiToast.timer); uiToast.timer=setTimeout(function(){ t.className=t.className.replace(' show',''); },kind==='bad'?6000:3200);
+}
+// 要输入东西的对话框：按「保存」或 Enter 回传输入的字；按「取消」、Esc、点对话框外面回传 null
+function uiAsk(o){
+  return new Promise(function(done){
+    var back=document.activeElement,m=document.createElement('div');
+    m.className='dlg-mask';
+    m.innerHTML='<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgT"><h3 id="dlgT"></h3><p></p>'
+      +'<input type="password" autocomplete="off" spellcheck="false"><div class="dlg-err" aria-live="polite"></div>'
+      +'<div class="dlg-btns"><button type="button" class="no">取消</button><button type="button" class="pri">保存</button></div></div>';
+    var q=function(s){ return m.querySelector(s); },inp=q('input'),err=q('.dlg-err');
+    q('h3').textContent=o.title; if(o.text)q('p').textContent=o.text; else q('p').remove(); inp.placeholder=o.placeholder||''; err.textContent=o.error||'';
+    function close(v){ document.removeEventListener('keydown',key,true); m.remove(); if(back&&back.focus)back.focus(); done(v); }
+    function ok(){ var v=inp.value.trim(); if(!v){ err.textContent='还没有输入'; inp.focus(); return; } close(v); }
+    function key(e){
+      if(e.key==='Escape'){ e.preventDefault(); close(null); }
+      else if(e.key==='Enter'&&document.activeElement===inp){ e.preventDefault(); ok(); }
+      else if(e.key==='Tab'){ var f=[inp,q('.no'),q('.pri')],i=f.indexOf(document.activeElement); e.preventDefault(); f[(i+(e.shiftKey?f.length-1:1))%f.length].focus(); }
+    }
+    q('.no').onclick=function(){ close(null); }; q('.pri').onclick=ok;
+    m.addEventListener('mousedown',function(e){ if(e.target===m)close(null); });
+    document.addEventListener('keydown',key,true);
+    document.body.appendChild(m); inp.focus();
+  });
+}
+
 // ====== 每小时报时开关：状态存在仓库的 settings.json，抓取脚本每次运行都会读 ======
 // 改开关等于改仓库里的文件，所以第一次点会要一组对这个仓库有写入权限的 GitHub token，只存在这台浏览器里
 (function(){
   var FILE='settings.json',API='https://api.github.com/repos/Workschedule-netizen/crypto-monitor/contents/'+FILE;
-  var el=document.getElementById('hourlyToggle'),on=true,busy=false;
+  var el=document.getElementById('hourlyToggle'),txt=document.getElementById('hourlyTxt'),on=true,busy=false,ready=false;
   function show(){
-    el.textContent='每小时报时：'+(busy?'保存中…':(on?'开':'关'));
-    el.className='hourly'+(on?'':' off');
-    el.title=on?'点一下关闭每小时的排查报告':'点一下重新打开每小时的排查报告';
+    txt.textContent=busy?'保存中…':'每小时报时';
+    el.className='hourly'+(on?'':' off')+(busy?' busy':'')+(ready?' ready':'');
+    el.setAttribute('aria-checked',on?'true':'false');
+    el.setAttribute('data-tip','输入写入权限的 token');
   }
   // 刚改完的几分钟内网页上的 settings.json 还是旧的，这段时间以这台浏览器记下的为准
   function pending(){ try{var p=JSON.parse(localStorage.getItem('monitorHourly')||'null'); if(p&&Date.now()-p.t<600000)return p;}catch(e){} return null; }
   fetch(FILE+'?_='+Date.now(),{cache:'no-store'})
     .then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; })
-    .then(function(s){ var p=pending(); on=p?p.v:(s.hourly_report!==false); show(); });
+    .then(function(s){ var p=pending(); on=p?p.v:(s.hourly_report!==false); show(); setTimeout(function(){ ready=true; show(); },60); });
+  // 第一次点（或 token 失效）时，在网页上跳出深色的输入框，不用浏览器的灰色 prompt
+  function ask(errMsg){
+    uiAsk({title:'请输入一组 GitHub token',placeholder:'github_pat_… 或 ghp_…',error:errMsg})
+      .then(function(tok){ if(tok)save(tok); });
+  }
   el.addEventListener('click',function(ev){
     ev.preventDefault(); if(busy)return;
     var tok=''; try{tok=localStorage.getItem('monitorGhToken')||'';}catch(e){}
-    if(!tok){
-      tok=(prompt('要改这个开关，需要一组对 crypto-monitor 仓库有写入权限（Contents: Read and write）的 GitHub token。\n只会存在这台浏览器里，之后不用再输入。')||'').trim();
-      if(!tok)return;
-    }
+    if(tok)save(tok); else ask('');
+  });
+  function save(tok){
     var want=!on,H={'Authorization':'Bearer '+tok,'Accept':'application/vnd.github+json'};
     busy=true; show();
     fetch(API+'?ref=main&_='+Date.now(),{headers:H,cache:'no-store'})
@@ -1487,15 +1611,17 @@ __ROWS__
         if(!r.ok)throw r.status;
         on=want;
         try{ localStorage.setItem('monitorGhToken',tok); localStorage.setItem('monitorHourly',JSON.stringify({v:want,t:Date.now()})); }catch(e){}
+        uiToast(want?'每小时报时已打开':'每小时报时已关闭','ok');
       })
       .catch(function(code){
         if(code===401||code===403||code===404){
+          // token 不能用：清掉，直接再跳输入框让人重填（框里用红字说明原因）
           try{localStorage.removeItem('monitorGhToken');}catch(e){}
-          alert('没改成功：token 不对、过期，或没有这个仓库的写入权限（HTTP '+code+'）。再点一次可以重新输入。');
-        } else alert('没改成功，请稍后再试（'+code+'）');
+          ask('token 不对或没有写入权限（HTTP '+code+'），请重新输入');
+        } else uiToast('没改成功，请稍后再试（'+(typeof code==='number'?'HTTP '+code:'网络连不上')+'）','bad');
       })
       .then(function(){ busy=false; show(); });
-  });
+  }
   show();
 })();
 </script>
