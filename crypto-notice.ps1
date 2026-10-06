@@ -932,15 +932,7 @@ __ROWS__
   <div class="banner" id="chanbanner"></div>
   <div class="filters orgrow" id="chanFilters"></div>
   <div class="chbox" id="changroups"></div>
-  <div class="pboc-line" style="margin-top:10px">红点 = 上游群组通知维护 / 暂停 / 关闭 / 异常，绿点 = 已通知恢复 / 开启，灰点 = 还没收到过通知<br>状态由程序从群组的文字通知判断，可能有误，请以下方公告原文为准</div>
-</div>
-<div class="section">
-  <div class="sec-head">
-    <div class="sec-title"><span class="bar" style="background:var(--warn)"></span><h2>通道公告</h2><span class="sub">上游群组的维护 / 恢复 / 费率通知 · 最近 50 条 · 每页 10 条</span></div>
-    <span class="sec-meta" id="channum"></span>
-  </div>
-  <div class="list" id="chanlist"></div>
-  <div class="pager" id="chanpager"></div>
+  <div class="pboc-line" style="margin-top:10px">红点 = 上游群组通知维护 / 暂停 / 关闭 / 异常，绿点 = 已通知恢复 / 开启，灰点 = 还没收到过通知<br>状态由程序从群组的文字通知判断，可能有误；鼠标停在格子上可以看最后一则通知的原文</div>
 </div>
 <div class="section">
   <div class="sec-head">
@@ -989,7 +981,7 @@ __ROWS__
     renderPager(pages);
   }
   function applyFilter(){ computeFiltered(); renderPage(1); }
-  // ====== 银行维护公告、通道公告、支付宝维护公告共用的分页：一页 PAGE_SIZE 条，下面显示 ‹ 1 2 3 › ======
+  // ====== 银行维护公告、支付宝维护公告共用的分页：一页 PAGE_SIZE 条，下面显示 ‹ 1 2 3 › ======
   // 这几个列表每分钟会重画一次：PAGES 记住每个列表现在在第几页，自动刷新不会跳回第 1 页
   var PAGES={};
   function pagedList(listId,pagerId,items,empty,scrollId){
@@ -1416,18 +1408,12 @@ __ROWS__
       .then(function(){ renderChannels(); renderChanNotices(); renderAlipay(); });
   }
   function renderChanNotices(){
-    var nt=CH.notices.slice().sort(function(a,b){return b.t-a.t;}).slice(0,50),down=chDown();
+    var down=chDown();
     var bn=document.getElementById('chanbanner');
     if(down.length){bn.className='banner has-alert';bn.textContent=down.length+' 个通道维护 / 暂停中：'+down.map(chName).join('、');}
     else if(CH.updated){bn.className='banner no-alert';bn.textContent='目前没有通道在维护';}
     else{bn.className='banner no-alert';bn.textContent='还没有收到群组监听的数据';}
-    var LV={down:['alert','维护 / 暂停'],up:['resume','恢复 / 开启'],info:['info','公告']};
-    pagedList('chanlist','chanpager',nt.map(function(n){
-      var lv=LV[n.s]||LV.info,tags=(n.m||[]).map(chName).join(' · ');
-      return '<div class="card lvl-'+lv[0]+'"><div class="row1"><span class="badge b-'+lv[0]+'">'+lv[1]+'</span><span class="src">'+esc(n.g||'')+'</span><span class="time">'+md(n.t)+' '+hm(n.t)+'</span></div><div class="title pre">'+esc(n.x||'')+'</div>'+(tags?'<div class="chtags">'+esc(tags)+'</div>':'')+'</div>';
-    }),'<div class="tl-empty" style="border-top:none">还没有通道公告</div>','channum');
     document.getElementById('chanupd').textContent=CH.updated?(md(CH.updated)+' '+hm(CH.updated)):'尚无数据';
-    document.getElementById('channum').textContent=nt.length?('共 '+nt.length+' 条'):'';
   }
   var chF='in'; try{chF=localStorage.getItem('monitorChan')||'in';}catch(e){}
   function renderChannels(){
