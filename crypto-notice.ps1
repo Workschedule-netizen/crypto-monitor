@@ -906,6 +906,7 @@ __ROWS__
     <button data-s="done">已结束</button>
   </div>
   <div class="list" id="banklist"></div>
+  <div class="pager" id="bankpager"></div>
 </div>
 <footer>
   <span id="banksrc"></span><br>
@@ -935,10 +936,11 @@ __ROWS__
 </div>
 <div class="section">
   <div class="sec-head">
-    <div class="sec-title"><span class="bar" style="background:var(--warn)"></span><h2>通道公告</h2><span class="sub">上游群组的维护 / 恢复 / 费率通知 · 最近 50 条</span></div>
+    <div class="sec-title"><span class="bar" style="background:var(--warn)"></span><h2>通道公告</h2><span class="sub">上游群组的维护 / 恢复 / 费率通知 · 最近 50 条 · 每页 10 条</span></div>
     <span class="sec-meta" id="channum"></span>
   </div>
   <div class="list" id="chanlist"></div>
+  <div class="pager" id="chanpager"></div>
 </div>
 <div class="section">
   <div class="sec-head">
@@ -947,6 +949,7 @@ __ROWS__
   </div>
   <div class="banner" id="alibanner"></div>
   <div class="list" id="alilist"></div>
+  <div class="pager" id="alipager"></div>
 </div>
 <footer>
   <span id="alisrc"></span><br>
@@ -986,6 +989,30 @@ __ROWS__
     renderPager(pages);
   }
   function applyFilter(){ computeFiltered(); renderPage(1); }
+  // ====== 银行维护公告、通道公告、支付宝维护公告共用的分页：一页 PAGE_SIZE 条，下面显示 ‹ 1 2 3 › ======
+  // 这几个列表每分钟会重画一次：PAGES 记住每个列表现在在第几页，自动刷新不会跳回第 1 页
+  var PAGES={};
+  function pagedList(listId,pagerId,items,empty,scrollId){
+    var list=document.getElementById(listId),pg=document.getElementById(pagerId);
+    var pages=Math.ceil(items.length/PAGE_SIZE)||1,p=Math.min(Math.max(PAGES[listId]||1,1),pages);
+    PAGES[listId]=p;
+    list.innerHTML=items.slice((p-1)*PAGE_SIZE,p*PAGE_SIZE).join('')||empty;
+    pg.innerHTML='';
+    if(pages<=1) return;
+    function mk(txt,page,active,disabled){
+      var b=document.createElement('button'); b.textContent=txt;
+      if(active) b.className='active';
+      if(disabled){ b.disabled=true; }
+      else b.addEventListener('click',function(){
+        PAGES[listId]=page; pagedList(listId,pagerId,items,empty,scrollId);
+        var el=document.getElementById(scrollId||listId); if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+      });
+      pg.appendChild(b);
+    }
+    mk('‹',p-1,false,p<=1);
+    for(var i=1;i<=pages;i++){ mk(String(i),i,i===p,false); }
+    mk('›',p+1,false,p>=pages);
+  }
   document.querySelectorAll('#chainFilters button').forEach(function(b){
     b.addEventListener('click',function(){
       document.querySelectorAll('#chainFilters button').forEach(function(x){x.classList.remove('active')});
@@ -1302,7 +1329,7 @@ __ROWS__
       var s=(e.st==='later')?'soon':e.st;
       return (gF==='all'||e.g===gF)&&(sF==='all'||s===sF);
     }).sort(function(a,b){ return (order[a.st]-order[b.st])||(a.st==='done'?b.e-a.e:a.s-b.s); });
-    document.getElementById('banklist').innerHTML=list.map(function(e){return eventCard(e,'ex-bank');}).join('')||'<div class="empty">没有符合条件的公告<span>换个筛选条件试试</span></div>';
+    pagedList('banklist','bankpager',list.map(function(e){return eventCard(e,'ex-bank');}),'<div class="empty">没有符合条件的公告<span>换个筛选条件试试</span></div>','orgFilters');
     document.getElementById('bankupd').textContent=DATA.updated?(md(DATA.updated)+' '+hm(DATA.updated)):'抓取失败';
     var bsrc=DATA.sources.map(function(s){return s.name;}).filter(function(n){return n!=='支付宝开放平台';});
     document.getElementById('banksrc').textContent=srcLine(bsrc)+' · 人民银行清算总中心（年度安排）｜已过滤非维护类公告 '+skippedN(false)+' 条';
@@ -1316,7 +1343,7 @@ __ROWS__
     document.querySelectorAll('#'+id+' button').forEach(function(b){
       b.addEventListener('click',function(){
         document.querySelectorAll('#'+id+' button').forEach(function(x){x.classList.remove('active');});
-        b.classList.add('active'); set(b.getAttribute(attr)); renderBank();
+        b.classList.add('active'); set(b.getAttribute(attr)); PAGES.banklist=1; renderBank();
       });
     });
   }
@@ -1363,12 +1390,12 @@ __ROWS__
     var dn=chDown().length;
     if(dn&&(state.alipay.cls===''||state.alipay.cls==='ok')) setBadge('alipay','warn',dn+' 个通道维护中');
     var order={now:0,soon:1,later:2,done:3};
-    var html=ev.sort(function(a,b){return (order[a.st]-order[b.st])||(a.s-b.s);}).map(function(e){return eventCard(e,'ex-ali');}).join('');
-    html+=nt.map(function(n){
+    var items=ev.sort(function(a,b){return (order[a.st]-order[b.st])||(a.s-b.s);}).map(function(e){return eventCard(e,'ex-ali');});
+    items=items.concat(nt.map(function(n){
       var isNew=now-n.pub<=3*DAY,lv=isNew?'alert':'resume';
       return '<a class="card lvl-'+lv+'" href="'+esc(n.url)+'" target="_blank" rel="noopener"><div class="row1"><span class="ex ex-ali">支付宝</span><span class="badge b-'+lv+'">'+(isNew?'维护 / 异常':'已过去')+'</span><span class="src">'+esc(n.src)+'</span><span class="time">'+ymd(n.pub)+'</span></div><div class="title">'+esc(n.title)+'</div></a>';
-    }).join('');
-    document.getElementById('alilist').innerHTML=html||'<div class="empty">近一年没有维护 / 异常类公告</div>';
+    }));
+    pagedList('alilist','alipager',items,'<div class="empty">近一年没有维护 / 异常类公告</div>','alibanner');
     document.getElementById('alifetch').textContent=DATA.updated?(md(DATA.updated)+' '+hm(DATA.updated)):'抓取失败';
     document.getElementById('alisrc').textContent=srcLine(['支付宝开放平台','易宝支付','快钱'])+'｜已过滤非维护类公告 '+skippedN(true)+' 条';
   }
@@ -1395,10 +1422,10 @@ __ROWS__
     else if(CH.updated){bn.className='banner no-alert';bn.textContent='目前没有通道在维护';}
     else{bn.className='banner no-alert';bn.textContent='还没有收到群组监听的数据';}
     var LV={down:['alert','维护 / 暂停'],up:['resume','恢复 / 开启'],info:['info','公告']};
-    document.getElementById('chanlist').innerHTML=nt.map(function(n){
+    pagedList('chanlist','chanpager',nt.map(function(n){
       var lv=LV[n.s]||LV.info,tags=(n.m||[]).map(chName).join(' · ');
       return '<div class="card lvl-'+lv[0]+'"><div class="row1"><span class="badge b-'+lv[0]+'">'+lv[1]+'</span><span class="src">'+esc(n.g||'')+'</span><span class="time">'+md(n.t)+' '+hm(n.t)+'</span></div><div class="title pre">'+esc(n.x||'')+'</div>'+(tags?'<div class="chtags">'+esc(tags)+'</div>':'')+'</div>';
-    }).join('')||'<div class="tl-empty" style="border-top:none">还没有通道公告</div>';
+    }),'<div class="tl-empty" style="border-top:none">还没有通道公告</div>','channum');
     document.getElementById('chanupd').textContent=CH.updated?(md(CH.updated)+' '+hm(CH.updated)):'尚无数据';
     document.getElementById('channum').textContent=nt.length?('共 '+nt.length+' 条'):'';
   }
